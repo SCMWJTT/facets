@@ -1,0 +1,36 @@
+appId: app.cynmark.facets
+productName: Facets
+copyright: © Cynmark Systems Limited
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - package.json
+asarUnpack:
+  - node_modules/better-sqlite3/**
+  - node_modules/sharp/**
+  - node_modules/@img/**
+  - node_modules/exiftool-vendored*/**
+npmRebuild: false
+publish: null
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.png
+  legalTrademarks: Facets is owned by Cynmark Systems Limited
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Facets
+  include: build/installer.nsh
+  artifactName: Facets-Setup-${version}.${ext}
+  deleteAppDataOnUninstall: false
+mac:
+  target: dmg
+  icon: build/icon.png
