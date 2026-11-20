@@ -29,7 +29,10 @@ export function Registry() {
   const [sort, setSort] = useState<{ k: string; d: 1 | -1 }>({ k: 'publicId', d: 1 })
   const rev = useStore((s) => s.shoots)
   const photos = useStore((s) => s.photos)
+  const seriesList = useStore((s) => s.series)
+  const [sreg, setSreg] = useState<{ publicId: string; title: string; state: string; issuedAt: string; titles: string[]; aliases: string[] }[]>([])
   useEffect(() => { void call<Reg>('registry').then(setReg) }, [rev, photos])
+  useEffect(() => { void call<typeof sreg>('seriesRegistry').then(setSreg) }, [seriesList])
 
   const ids = useMemo(() => {
     if (!reg) return []
@@ -61,6 +64,24 @@ export function Registry() {
             </tbody>
           </table>
           {!codes.length && <div className="empty">No shoot codes yet.</div>}
+        </div>
+        <div className="ex-head"><h3>Series IDs</h3><span className="muted">{sreg.length}</span>
+          <button className="btn small" style={{ marginLeft: 'auto' }} onClick={() => download('facets-series-ids.csv', csv([['Series ID', 'Title', 'State', 'Issued', 'Earlier titles', 'Aliases'], ...sreg.map((r) => [r.publicId, r.title, r.state, r.issuedAt, r.titles.join(' | '), r.aliases.join(' | ')])]))}><Icon name="save" size={13} />CSV</button>
+        </div>
+        <div className="reg">
+          <table>
+            <thead><tr><th>Series ID</th><th>Title</th><th>State</th></tr></thead>
+            <tbody>
+              {sreg.filter((r) => !q.trim() || [r.publicId, r.title, ...r.titles, ...r.aliases].some((x) => x.toLowerCase().includes(q.trim().toLowerCase()))).map((r) => (
+                <tr key={r.publicId} title={r.titles.length ? `Earlier titles: ${r.titles.join('; ')}` : undefined}>
+                  <td className={'mono' + (r.state === 'retired' ? ' retired' : '')} style={{ color: 'var(--blue)' }}>{r.publicId}</td>
+                  <td>{r.title}{r.titles.length > 0 && <span className="muted"> · was {r.titles[r.titles.length - 1]}</span>}{r.aliases.length > 0 && <span className="muted"> · alias {r.aliases.join(', ')}</span>}</td>
+                  <td><span className={'tag ' + (r.state === 'active' ? 'ok' : 'warn')}>{r.state}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!sreg.length && <div className="empty">No Series yet.</div>}
         </div>
       </section>
       <section>

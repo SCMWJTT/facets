@@ -6,8 +6,9 @@ import { useStore } from '../store'
 import { fmtCaptured, pathLabel, useCtx, visibleTrees, type Ctx } from '../logic'
 import { Icon, facetColor, treeIcon } from './Icon'
 import { Stars } from './ui'
-import { openPicker, PickerHost } from './NodePicker'
+import { openPicker } from './NodePicker'
 import { MapPanel, distanceM } from './MapPanel'
+import { PhotoSeriesTab, SeriesEditor } from './SeriesEditor'
 import * as cmd from '../commands'
 
 function shared<T>(photos: PhotoRow[], get: (p: PhotoRow) => T): { value: T | null; mixed: boolean } {
@@ -24,6 +25,23 @@ export function Inspector() {
   const setUi = useStore((s) => s.setUi)
   const ctx = useCtx()
   const photos = useMemo(() => [...selected].map((id) => byId.get(id)).filter((p): p is PhotoRow => !!p), [selected, byId])
+  const seriesTarget = useStore((s) => s.seriesTarget)
+  const series = useStore((s) => s.series)
+
+  if (seriesTarget !== null) {
+    const x = series.find((s) => s.id === seriesTarget)
+    return (
+      <>
+        <div className="target-strip series">
+          <span>Editing Series {x?.publicId ?? ''}</span>
+          <button className="linkbtn" title="Back to editing the selected photos" onClick={() => useStore.getState().set({ seriesTarget: null })}>
+            {photos.length ? `Edit ${photos.length} photo${photos.length === 1 ? '' : 's'} instead` : 'Close'}
+          </button>
+        </div>
+        <div className="insp-body" key={`s${seriesTarget}`}><SeriesEditor id={seriesTarget} compact /></div>
+      </>
+    )
+  }
 
   if (!photos.length) {
     return (
@@ -50,10 +68,9 @@ export function Inspector() {
         {tab === 'classify' && <Classify photos={photos} ctx={ctx} />}
         {tab === 'locate' && <Locate photos={photos} ctx={ctx} />}
         {tab === 'shoot' && <ShootTab photos={photos} ctx={ctx} />}
-        {tab === 'series' && <SeriesTab photos={photos} ctx={ctx} />}
+        {tab === 'series' && <PhotoSeriesTab photos={photos} />}
         {tab === 'history' && <History photos={photos} />}
       </div>
-      <PickerHost />
     </>
   )
 }
@@ -424,6 +441,7 @@ function ShootTab({ photos, ctx }: { photos: PhotoRow[]; ctx: Ctx }) {
           <div>Camera</div><div>{p.cameraBody || '—'}</div>
           <div>Lens</div><div>{p.lens || '—'}</div>
           <div>Exposure</div><div>{[p.focal ? `${p.focal} mm` : '', p.aperture ? `f/${p.aperture}` : '', p.shutter ? `${p.shutter} s` : '', p.iso ? `ISO ${p.iso}` : ''].filter(Boolean).join('  ·  ') || '—'}</div>
+          <div>From Filter</div><div>{p.filterBatch || '—'}</div>
           <div>Imported</div><div>{new Date(p.importedAt).toLocaleString()}</div>
           <div>Modified</div><div>{new Date(p.modifiedAt).toLocaleString()}</div>
           <div>Last exported</div><div>{p.exportedAt ? new Date(p.exportedAt).toLocaleString() : 'Never'}</div>
@@ -435,21 +453,8 @@ function ShootTab({ photos, ctx }: { photos: PhotoRow[]; ctx: Ctx }) {
   )
 }
 
-function SeriesTab({ photos, ctx }: { photos: PhotoRow[]; ctx: Ctx }) {
-  const ids = new Set(photos.flatMap((p) => p.series))
-  return (
-    <>
-      {ids.size === 0 ? (
-        <div className="muted">Not in any Series.</div>
-      ) : (
-        [...ids].map((id) => { const x = ctx.series.get(id); return x ? <div key={id} className="hsec">{x.title} <span className="muted mono">{x.publicId}</span></div> : null })
-      )}
-      <div className="muted" style={{ fontSize: 12 }}>Series (editorial collections, each with one Primary Facet) and their editor arrive in build stage 3.</div>
-    </>
-  )
-}
 
-function Commit({ label, value, onCommit, multiline, rows = 3, mono }: { label: string; value: string; onCommit: (v: string) => void; multiline?: boolean; rows?: number; mono?: boolean }) {
+export function Commit({ label, value, onCommit, multiline, rows = 3, mono }: { label: string; value: string; onCommit: (v: string) => void; multiline?: boolean; rows?: number; mono?: boolean }) {
   const [v, setV] = useState(value)
   useEffect(() => setV(value), [value])
   const done = (): void => { if (v !== value) onCommit(v) }
@@ -467,11 +472,17 @@ function Commit({ label, value, onCommit, multiline, rows = 3, mono }: { label: 
 
 function ShootDetails({ shootId }: { shootId: number }) {
   const s = useStore((st) => st.shoots.find((x) => x.id === shootId))
+  const photos = useStore((st) => st.photos)
+  const span = useMemo(() => {
+    const t = photos.filter((p) => p.shootId === shootId && p.captured).map((p) => p.captured!).sort()
+    return { n: photos.filter((p) => p.shootId === shootId).length, start: t[0], end: t[t.length - 1] }
+  }, [photos, shootId])
   if (!s) return null
   return (
     <div className="hsec col">
       <div className="hname" style={{ marginBottom: 0 }}><span className="code mono" style={{ color: 'var(--accent)' }}>{s.code}</span> Shoot details</div>
       <Commit label="Name" value={s.name} onCommit={(v) => void act('updateShoot', s.id, { name: v })} />
+      <div className="muted" style={{ fontSize: 12 }}>{span.n} photo{span.n === 1 ? '' : 's'}{span.start ? ` · ${fmtCaptured(span.start)}${span.end && span.end !== span.start ? ` – ${fmtCaptured(span.end)}` : ''}` : ''} (derived from its photos)</div>
       <Commit label="Description" value={s.description} multiline onCommit={(v) => void act('updateShoot', s.id, { description: v })} />
       <div>
         <div className="label">Privacy</div>

@@ -3,10 +3,12 @@ declare const __BUILD_DATE__: string
 import { BrowserWindow, dialog, shell, app } from 'electron'
 import fs from 'fs'
 import path from 'path'
-import type { ActionResult, AppInfo, DuplicateChoice, FieldEdit, LocationState, TNode, Tree, PasteSpec, Settings, Shoot } from '@shared/types'
+import type { ActionResult, AppInfo, DuplicateChoice, FieldEdit, LocationState, TNode, Tree, PasteSpec, SeriesPatch, Settings, Shoot } from '@shared/types'
 import { Library, type ActionOutcome, type OpOptions, type Tx } from './db/library'
 import * as C from './services/catalog'
-import { runImport } from './services/importer'
+import { runImport, readFilterManifest, rereadMetadata, type RereadField } from './services/importer'
+import * as S from './services/series'
+import * as X from './services/taxonomy'
 import { ThumbQueue } from './services/thumbs'
 import { endExifTool } from './services/exif'
 
@@ -414,6 +416,151 @@ export class Api {
   }
   deleteSet(setId: number): ActionResult {
     return this.act('Remove set', (tx) => tx.set('sets', setId, 'retired', 1), () => 'Set removed (photos are not affected)')
+  }
+  duplicateSet(setId: number, name: string): ActionResult {
+    return this.act('Duplicate set', (tx, lib) => C.duplicateSet(tx, lib, setId, name), () => `Set "${name}" created`)
+  }
+  replaceSet(setId: number, ids: number[]): ActionResult {
+    return this.act('Replace set contents', (tx, lib) => C.replaceSet(tx, lib, setId, ids), (n) => `The set now holds ${n} photos`, ids.length)
+  }
+  archiveSet(setId: number, archived: boolean): ActionResult {
+    return this.act(archived ? 'Archive set' : 'Restore set', (tx) => C.archiveSet(tx, setId, archived), () => (archived ? 'Set archived' : 'Set restored'))
+  }
+  saveSetState(setId: number, state: Record<string, unknown>): void {
+    C.saveSetState(this.need(), setId, state)
+  }
+
+  // ------------------------------------------------ shoots: proposals
+
+  proposeShoots(ids: number[], gapHours: number, jumpKm: number) {
+    return C.proposeShoots(this.need(), ids, gapHours, jumpKm)
+  }
+  createShoots(list: { name: string; code: string; ids: number[] }[]): ActionResult {
+    return this.act(
+      `Create ${list.length} proposed Shoot${list.length === 1 ? '' : 's'}`,
+      (tx, lib) => {
+        for (const x of list) {
+          const id = C.createShoot(tx, lib, x.name, x.code, [])
+          C.setShoot(tx, lib, x.ids, id)
+          lib.db.prepare("UPDATE photos SET shoot_provenance = 'heuristic' WHERE id IN (" + x.ids.join(',') + ')').run()
+        }
+        return list.length
+      },
+      (n) => `${n} Shoot${n === 1 ? '' : 's'} created`,
+      list.reduce((a, x) => a + x.ids.length, 0)
+    )
+  }
+  shootSpan(id: number) {
+    return C.shootSpan(this.need(), id)
+  }
+
+  // ------------------------------------------------ tree files, cross-references, tidy-up
+
+  async exportTaxonomy(treeId: number | null): Promise<string | null> {
+    const lib = this.need()
+    const doc = treeId === null ? X.exportAllTaxonomies(lib) : X.exportTaxonomy(lib, treeId)
+    const name = treeId === null ? `facets-trees-${new Date().toISOString().slice(0, 10)}.json` : `${(doc as X.TaxTree).tree.key}.facets-tree.json`
+    const r = await dialog.showSaveDialog(this.win()!, { defaultPath: name, filters: [{ name: 'Facets tree file', extensions: ['json'] }] })
+    if (r.canceled || !r.filePath) return null
+    fs.writeFileSync(r.filePath, JSON.stringify(doc, null, 2), 'utf8')
+    return r.filePath
+  }
+  /** Step 1: choose a file and see what it would do. Nothing changes. */
+  async previewTaxonomyFile(): Promise<{ file: string; preview: ReturnType<typeof X.previewTaxonomyImport> } | null> {
+    const r = await dialog.showOpenDialog(this.win()!, { properties: ['openFile'], filters: [{ name: 'Facets tree file', extensions: ['json'] }] })
+    if (r.canceled || !r.filePaths[0]) return null
+    const file = r.filePaths[0]
+    const trees = X.parseTaxonomy(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''))
+    return { file, preview: X.previewTaxonomyImport(this.need(), trees) }
+  }
+  /** Step 2: apply the previewed file as one undoable action. */
+  applyTaxonomyFile(file: string): ActionResult {
+    const trees = X.parseTaxonomy(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''))
+    const res = this.act('Import tree file', (tx, lib) => X.applyTaxonomyImport(tx, lib, trees), (p) => {
+      const n = p.trees.reduce((a, t) => a + t.newNodes, 0)
+      return `${n} new entr${n === 1 ? 'y' : 'ies'} added; ${p.trees.reduce((a, t) => a + t.matched, 0)} matched existing ones`
+    })
+    if (res.delta) {
+      C.rebuildClosure(this.need())
+      res.delta.nodes = C.readNodes(this.need())
+      res.delta.trees = C.readTrees(this.need())
+    }
+    return res
+  }
+  addXref(a: number, b: number): ActionResult {
+    return this.act('Add cross-reference', (tx, lib) => X.addXref(tx, lib, a, b), () => 'Cross-reference added')
+  }
+  removeXref(a: number, b: number): ActionResult {
+    return this.act('Remove cross-reference', (tx, lib) => X.removeXref(tx, lib, a, b), () => 'Cross-reference removed')
+  }
+  tidyReport(treeId: number) {
+    return X.tidyReport(this.need(), treeId)
+  }
+  /** A sixth Facet: a guarded action the interface only offers after a warning. */
+  createFacet(h: C.TreeSpec): ActionResult {
+    return this.act('New Facet', (tx, lib) => C.createTree(tx, lib, { ...h, kind: 'facet', hidden: false, multi: true }), () => `Facet ${h.name} created`)
+  }
+
+  // ------------------------------------------------ Filter manifest and re-reading metadata
+
+  async readFilterManifest(): Promise<ActionResult | null> {
+    const lib = this.need()
+    const r = await dialog.showOpenDialog(this.win()!, { properties: ['openFile'], filters: [{ name: 'Filter manifest', extensions: ['json'] }] })
+    if (r.canceled || !r.filePaths[0]) return null
+    const res = readFilterManifest(lib, fs.readFileSync(r.filePaths[0], 'utf8').replace(/^\uFEFF/, ''))
+    const message = `${res.batch}: ${res.matched} photos matched${res.unmatched.length ? `; ${res.unmatched.length} files in the manifest are not in this library` : ''}`
+    const ids = (lib.db.prepare('SELECT id FROM photos WHERE filter_batch = ?').all(res.batch) as { id: number }[]).map((x) => x.id)
+    return { ok: true, message, data: res, delta: C.deltaFor(lib, { touchedPhotos: new Set(ids), touchedTables: new Set() }, message) }
+  }
+  async rereadMetadata(ids: number[], fields: RereadField[]): Promise<ActionResult> {
+    const lib = this.need()
+    const r = await rereadMetadata(lib, ids, fields)
+    const message = `Re-read ${r.read} photo${r.read === 1 ? '' : 's'}${r.skipped ? `; ${r.skipped} skipped (file offline or unreadable)` : ''}`
+    r.out.touchedTables.add('nodes')
+    return { ok: true, message, delta: C.deltaFor(lib, r.out, message) }
+  }
+
+  // ------------------------------------------------ Series
+
+  createSeries(s: S.NewSeries): ActionResult {
+    return this.act('New Series', (tx, lib) => S.createSeries(tx, lib, s), () => `Series "${s.title}" created`, s.photoIds.length)
+  }
+  seriesOverlap(q: { photoIds: number[]; primaryNodeId: number | null; title: string; excludeId?: number | null }) {
+    return S.overlapWarnings(this.need(), q)
+  }
+  updateSeries(id: number, patch: SeriesPatch): ActionResult {
+    return this.act('Edit Series', (tx, lib) => S.updateSeries(tx, lib, id, patch), () => 'Series updated')
+  }
+  addToSeries(id: number, ids: number[]): ActionResult {
+    return this.act('Add to Series', (tx, lib) => S.addMembers(tx, lib, id, ids), (n) => `${n} photo${n === 1 ? '' : 's'} added to the Series`, ids.length)
+  }
+  removeFromSeries(id: number, ids: number[]): ActionResult {
+    return this.act('Remove from Series', (tx, lib) => S.removeMembers(tx, lib, id, ids), (n) => `${n} photo${n === 1 ? '' : 's'} removed from the Series`, ids.length)
+  }
+  reorderSeries(id: number, ordered: number[]): ActionResult {
+    return this.act('Reorder Series', (tx, lib) => S.reorderMembers(tx, lib, id, ordered), () => 'Series order changed')
+  }
+  setSeriesFeatured(id: number, photoId: number, on: boolean): ActionResult {
+    return this.act(on ? 'Feature photo' : 'Unfeature photo', (tx, lib) => S.setFeatured(tx, lib, id, photoId, on), () => (on ? 'Added to featured' : 'Removed from featured'))
+  }
+  setSeriesSupporting(id: number, nodeId: number, on: boolean): ActionResult {
+    return this.act(on ? 'Add supporting keyword' : 'Remove supporting keyword', (tx, lib) => S.setSupporting(tx, lib, id, nodeId, on), () => 'Series keywords updated')
+  }
+  setSeriesPlace(id: number, nodeId: number, on: boolean): ActionResult {
+    return this.act(on ? 'Add Series place' : 'Remove Series place', (tx, lib) => S.setPlace(tx, lib, id, nodeId, on), () => 'Series places updated')
+  }
+  retireSeries(id: number): ActionResult {
+    return this.act('Retire Series', (tx) => S.retireSeries(tx, id), () => 'Series retired (its ID is never reused)')
+  }
+  applySeriesKeywords(id: number, nodeIds: number[]): ActionResult {
+    const n = (this.need().db.prepare('SELECT COUNT(*) AS n FROM series_members WHERE series_id = ?').get(id) as { n: number }).n
+    return this.act('Apply Series keywords to members', (tx, lib) => S.applySeriesKeywords(tx, lib, id, nodeIds), (k) => `${k} keyword assignment${k === 1 ? '' : 's'} added to member photos`, n, { source: 'bulk' })
+  }
+  seriesHistory(id: number) {
+    return S.seriesHistory(this.need(), id)
+  }
+  seriesRegistry() {
+    return S.readSeriesRegistry(this.need())
   }
 
   // ------------------------------------------------ history, undo, settings, backup

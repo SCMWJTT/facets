@@ -247,6 +247,7 @@ export const FLAG_KEYS = [
   ['people', 'Shows people'],
   ['private', 'Private place'],
   ['internal', 'Internal tags pending review'],
+  ['filter', 'Picked in Filter'],
   ['variant', 'Variants'],
   ['changed', 'Changed since export'],
   ['thumbless', 'No thumbnail yet']
@@ -254,6 +255,7 @@ export const FLAG_KEYS = [
 
 // ---------------------------------------------------------------- filtering
 
+const selSets = new WeakMap<number[], Set<number>>()
 function inSource(p: PhotoRow, s: Source, nodeSet: Set<number> | null): boolean {
   switch (s.kind) {
     case 'all':
@@ -273,6 +275,11 @@ function inSource(p: PhotoRow, s: Source, nodeSet: Set<number> | null): boolean 
       return p.internal.length > 0
     case 'node':
       return p.nodes.some((n) => nodeSet!.has(n))
+    case 'selection': {
+      let set = selSets.get(s.ids)
+      if (!set) selSets.set(s.ids, (set = new Set(s.ids)))
+      return set.has(p.id)
+    }
   }
 }
 
@@ -286,10 +293,11 @@ function textHit(p: PhotoRow, q: string, ctx: Ctx): boolean {
     }
   }
   const sh = p.shootId ? ctx.shoots.get(p.shootId) : null
-  if (sh && (sh.name.toLowerCase().includes(q) || sh.code.toLowerCase().includes(q))) return true
+  if (sh && (sh.name.toLowerCase().includes(q) || sh.code.toLowerCase().includes(q) || sh.description.toLowerCase().includes(q))) return true
   for (const id of p.series) {
     const se = ctx.series.get(id)
-    if (se && (se.title.toLowerCase().includes(q) || se.publicId.toLowerCase().includes(q))) return true
+    if (se && (se.title.toLowerCase().includes(q) || se.publicId.toLowerCase().includes(q) || se.summary.toLowerCase().includes(q) || se.narrative.toLowerCase().includes(q))) return true
+    if (se) for (const nid of se.supporting) { const n = ctx.nodeById.get(nid); if (n && (n.label.toLowerCase().includes(q) || n.aliases.some((a) => a.toLowerCase().includes(q)))) return true }
   }
   for (const id of p.nodes) {
     const n = ctx.nodeById.get(id)
@@ -308,6 +316,8 @@ function flagHit(p: PhotoRow, f: string, variantKeys: Set<string>): boolean {
       return p.privatePlace
     case 'internal':
       return p.internal.length > 0
+    case 'filter':
+      return !!p.filterBatch
     case 'variant':
       return variantKeys.has(p.rawKey.toLowerCase())
     case 'changed':

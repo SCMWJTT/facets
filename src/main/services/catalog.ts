@@ -18,6 +18,7 @@ import type {
 import { PHOTO_FIELDS } from '@shared/types'
 import { Library, Tx, nowIso, type ActionOutcome } from '../db/library'
 import { publishedName } from '@shared/naming'
+import { readSeriesFull } from './series'
 
 const b = (v: unknown): boolean => v === 1 || v === true
 
@@ -152,7 +153,17 @@ export function readTrees(lib: Library): Tree[] {
   }))
 }
 
+function readXrefs(lib: Library): Map<number, number[]> {
+  const m = new Map<number, number[]>()
+  for (const r of lib.db.prepare('SELECT node_id AS a, other_node_id AS b FROM node_xrefs').all() as { a: number; b: number }[]) {
+    m.set(r.a, [...(m.get(r.a) ?? []), r.b])
+    m.set(r.b, [...(m.get(r.b) ?? []), r.a])
+  }
+  return m
+}
+
 export function readNodes(lib: Library): TNode[] {
+  const xrefs = readXrefs(lib)
   return (lib.db.prepare('SELECT * FROM nodes').all() as Record<string, unknown>[]).map((r) => ({
     id: r.id as number,
     treeId: r.tree_id as number,
@@ -170,7 +181,8 @@ export function readNodes(lib: Library): TNode[] {
     zoom: (r.zoom as number) ?? null,
     domain: r.domain as TNode['domain'],
     hidden: b(r.hidden),
-    retired: b(r.retired)
+    retired: b(r.retired),
+    xrefs: xrefs.get(r.id as number) ?? []
   }))
 }
 
@@ -192,19 +204,7 @@ export function readShoots(lib: Library): Shoot[] {
 }
 
 export function readSeries(lib: Library): Series[] {
-  return (lib.db.prepare('SELECT * FROM series WHERE retired = 0 ORDER BY public_id').all() as Record<string, unknown>[]).map(
-    (r) => ({
-      id: r.id as number,
-      publicId: r.public_id as string,
-      title: r.title as string,
-      slug: r.slug as string,
-      summary: r.summary as string,
-      primaryNodeId: (r.primary_node_id as number) ?? null,
-      privacy: r.privacy as Series['privacy'],
-      coverPhotoId: (r.cover_photo_id as number) ?? null,
-      status: r.status as Series['status']
-    })
-  )
+  return readSeriesFull(lib)
 }
 
 export function readSets(lib: Library): PhotoSet[] {
@@ -215,7 +215,8 @@ export function readSets(lib: Library): PhotoSet[] {
     name: r.name as string,
     kind: r.kind as PhotoSet['kind'],
     createdAt: r.created_at as string,
-    archived: b(r.archived)
+    archived: b(r.archived),
+    state: JSON.parse((r.state as string) || '{}')
   }))
 }
 
@@ -260,8 +261,8 @@ export function deltaFor(lib: Library, out: Pick<ActionOutcome<unknown>, 'touche
     d.trees = readTrees(lib)
   }
   if (t.has('shoots') || t.has('id_registry')) d.shoots = readShoots(lib)
-  if (t.has('series')) d.series = readSeries(lib)
-  if (t.has('sets')) d.sets = readSets(lib)
+  if ([...t].some((x) => x.startsWith('series'))) d.series = readSeries(lib)
+  if (t.has('sets') || t.has('set_members')) d.sets = readSets(lib)
   if (out.touchedPhotos.size) {
     const ids = [...out.touchedPhotos]
     d.photos = readPhotos(lib, ids)
@@ -1091,3 +1092,94 @@ export function photoHistory(lib: Library, photoId: number): HistoryEntry[] {
 }
 
 export type { Settings }
+
+// ---------------------------------------------------------------- more Set commands
+
+export function duplicateSet(tx: Tx, lib: Library, setId: number, name: string): number {
+  const ids = (lib.db.prepare('SELECT photo_id FROM set_members WHERE set_id = ?').all(setId) as { photo_id: number }[]).map((r) => r.photo_id)
+  return createSet(tx, name, ids)
+}
+
+/** Replace a Set's contents with the given photos (one undoable action). */
+export function replaceSet(tx: Tx, lib: Library, setId: number, ids: number[]): number {
+  const want = new Set(ids)
+  const have = lib.db.prepare('SELECT id, photo_id FROM set_members WHERE set_id = ?').all(setId) as { id: number; photo_id: number }[]
+  for (const r of have) if (!want.has(r.photo_id)) tx.delete('set_members', r.id)
+  const had = new Set(have.map((r) => r.photo_id))
+  let n = 0
+  for (const p of ids) if (!had.has(p)) { tx.insert('set_members', { set_id: setId, photo_id: p }); n++ }
+  tx.touchedTables.add('sets')
+  return ids.length
+}
+
+export function archiveSet(tx: Tx, setId: number, archived: boolean): void {
+  tx.set('sets', setId, 'archived', archived)
+}
+
+/** Remember how a Set was left (filters, sort, view). Interface state, so not an undo step. */
+export function saveSetState(lib: Library, setId: number, state: Record<string, unknown>): void {
+  lib.db.prepare('UPDATE sets SET state = ? WHERE id = ?').run(JSON.stringify(state), setId)
+}
+
+// ---------------------------------------------------------------- Shoot reconstruction (proposals only)
+
+function km(aLat: number, aLon: number, bLat: number, bLon: number): number {
+  const r = (d: number): number => (d * Math.PI) / 180
+  const dLat = r(bLat - aLat)
+  const dLon = r(bLon - aLon)
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(r(aLat)) * Math.cos(r(bLat)) * Math.sin(dLon / 2) ** 2
+  return 12742 * Math.asin(Math.sqrt(h))
+}
+
+/**
+ * Propose Shoots for photos not yet in a Shoot: sort by capture time (then raw key) and split where the
+ * gap exceeds gapHours or the position jumps more than jumpKm. Thresholds are suggestions; nothing is written.
+ */
+export function proposeShoots(lib: Library, ids: number[], gapHours: number, jumpKm: number): import('@shared/types').ShootProposal[] {
+  const photos = readPhotos(lib, ids)
+    .filter((p) => p.shootId === null)
+    .sort((a, c) => (a.captured ?? '~').localeCompare(c.captured ?? '~') || a.rawKey.localeCompare(c.rawKey))
+  const groups: PhotoRow[][] = []
+  let cur: PhotoRow[] = []
+  let lastPos: { lat: number; lon: number } | null = null
+  for (const p of photos) {
+    const prev = cur[cur.length - 1]
+    let split = false
+    if (prev) {
+      if (p.captured && prev.captured) {
+        const gap = (Date.parse(p.captured) - Date.parse(prev.captured)) / 3600000
+        if (gap > gapHours) split = true
+      } else if (!!p.captured !== !!prev.captured) split = true
+      if (!split && jumpKm > 0 && lastPos && p.lat !== null && p.lon !== null && km(lastPos.lat, lastPos.lon, p.lat, p.lon) > jumpKm) split = true
+    }
+    if (split && cur.length) {
+      groups.push(cur)
+      cur = []
+      lastPos = null
+    }
+    cur.push(p)
+    if (p.lat !== null && p.lon !== null) lastPos = { lat: p.lat, lon: p.lon }
+  }
+  if (cur.length) groups.push(cur)
+  return groups.map((g) => {
+    const times = g.map((p) => p.captured).filter((x): x is string => !!x)
+    const start = times[0] ?? null
+    return {
+      ids: g.map((p) => p.id),
+      start,
+      end: times[times.length - 1] ?? null,
+      withGps: g.filter((p) => p.lat !== null).length,
+      noTime: g.length - times.length,
+      suggestedName: start ? new Date(start + 'Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : 'Undated photos'
+    }
+  })
+}
+
+/** Shoot start and end, derived from its photos (with its clock correction). */
+export function shootSpan(lib: Library, shootId: number): { start: string | null; end: string | null } {
+  const r = lib.db.prepare('SELECT MIN(captured) AS a, MAX(captured) AS z FROM photos WHERE shoot_id = ? AND retired = 0').get(shootId) as {
+    a: string | null
+    z: string | null
+  }
+  return { start: r.a, end: r.z }
+}

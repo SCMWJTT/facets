@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { bridge, call } from './api'
-import { useStore } from './store'
+import { useStore, EMPTY_FILTERS, type Filters, type Source, type UiPrefs, type View } from './store'
 import type { Delta, Snapshot } from '@shared/types'
 import { FacetsMark, Icon } from './components/Icon'
 import { MenuBar, WORKSPACES } from './components/MenuBar'
@@ -11,7 +11,9 @@ import { LibraryView } from './components/LibraryView'
 import { Inspector } from './components/Inspector'
 import { Explorer } from './components/Explorer'
 import { Registry } from './components/Registry'
+import { SeriesWorkspace } from './components/SeriesWorkspace'
 import { Dialogs } from './components/Dialogs'
+import { PickerHost } from './components/NodePicker'
 import { StatusBar } from './components/StatusBar'
 import * as cmd from './commands'
 import { useVisible } from './logic'
@@ -19,8 +21,60 @@ import { useVisible } from './logic'
 export async function loadLibrary(): Promise<void> {
   const state = await call<{ library: { path: string; name: string } | null; recent: string[]; version: string }>('state')
   useStore.getState().setLibraryState(state)
-  if (state.library) useStore.getState().loadSnapshot(await call<Snapshot>('snapshot'))
+  if (state.library) {
+    const s = useStore.getState()
+    s.loadSnapshot(await call<Snapshot>('snapshot'))
+    // Reopen where the owner left off: the last active Set (or other source), exactly as it was.
+    try {
+      const last = JSON.parse(localStorage.getItem('facets.last.' + state.library.path) ?? 'null') as Source | null
+      const st = useStore.getState()
+      const valid =
+        last &&
+        (last.kind === 'all' || last.kind === 'noShoot' || last.kind === 'locUnknown' || last.kind === 'pending' ||
+          (last.kind === 'set' && st.sets.some((x) => x.id === last.id)) ||
+          (last.kind === 'shoot' && st.shoots.some((x) => x.id === last.id)) ||
+          (last.kind === 'series' && st.series.some((x) => x.id === last.id)) ||
+          (last.kind === 'node' && st.nodes.some((x) => x.id === last.id)))
+      if (valid) {
+        st.setSource(last)
+        if (last.kind === 'set') restoreSetState(last.id)
+        st.set({ workspace: 'library' })
+      }
+    } catch {
+      /* no remembered state */
+    }
+  }
 }
+
+/** Put back a Set's remembered filters, view, sort and grouping (or start it clean). */
+function restoreSetState(id: number): void {
+  const s = useStore.getState()
+  const st = s.sets.find((x) => x.id === id)?.state as { filters?: Filters; view?: View; sort?: UiPrefs['sort']; groupBy?: string } | undefined
+  s.set({ filters: st?.filters ?? EMPTY_FILTERS, ...(st?.view ? { view: st.view } : {}) })
+  if (st?.sort || st?.groupBy) s.setUi({ ...(st.sort ? { sort: st.sort } : {}), ...(st.groupBy ? { groupBy: st.groupBy } : {}) })
+}
+
+/** Keep each Set's state and the last source saved as the owner works. */
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+useStore.subscribe((now, prev) => {
+  if (!now.library) return
+  if (now.source !== prev.source) {
+    localStorage.setItem('facets.last.' + now.library.path, JSON.stringify(now.source.kind === 'selection' ? { kind: 'all' } : now.source))
+    if (now.source.kind === 'set' && !(prev.source.kind === 'set' && prev.source.id === now.source.id)) restoreSetState(now.source.id)
+    else if (prev.source.kind === 'set' && now.source.kind !== 'set') useStore.getState().set({ filters: EMPTY_FILTERS })
+  }
+  const src = useStore.getState().source
+  if (src.kind !== 'set') return
+  const cur = useStore.getState()
+  if (now.filters === prev.filters && now.view === prev.view && now.ui.sort === prev.ui.sort && now.ui.groupBy === prev.ui.groupBy && now.source === prev.source) return
+  const id = src.id
+  const state = { filters: cur.filters, view: cur.view, sort: cur.ui.sort, groupBy: cur.ui.groupBy }
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => {
+    void call('saveSetState', id, state).catch(() => undefined)
+    useStore.setState({ sets: useStore.getState().sets.map((x) => (x.id === id ? { ...x, state } : x)) })
+  }, 400)
+})
 
 export function App() {
   const library = useStore((s) => s.library)
@@ -56,10 +110,11 @@ export function App() {
       {workspace === 'hierarchies' && <div className="main"><div className="grow" style={{ minWidth: 0 }}><Explorer /></div></div>}
       {workspace === 'registry' && <div className="main"><div className="grow" style={{ minWidth: 0 }}><Registry /></div></div>}
       {workspace === 'map' && <Coming icon="map" title="Map" stage={6} text="The full-screen geographic workspace: layers for photos, Shoots, Series and places, lasso selection kept in step with the grid, the missing-location lane and a timeline. Until then, the Locate tab in the inspector places photos." />}
-      {workspace === 'series' && <Coming icon="series" title="Series" stage={3} text="Editorial collections, each with one Primary Facet: cards with covers, counts and status, the overlap check and the full Series editor." />}
+      {workspace === 'series' && <SeriesWorkspace />}
       {workspace === 'history' && <Coming icon="history" title="History" stage={9} text="Every operation, with filters, a preview and revert with conflict checks. Every change is already being recorded, so this history will reach back to today. Undo and redo work now (Ctrl+Z, Ctrl+Y)." />}
       <StatusBar />
       <Dialogs />
+      <PickerHost />
       <MenuHost />
       <AskHost />
       <Toasts />
@@ -76,23 +131,22 @@ function TitleBar() {
   const open = useStore((s) => s.openDialog)
   return (
     <div className="titlebar">
-      <div className="brand" title={library.path}>
+      <div className="brand" title={`Library: ${library.path}`}>
         <FacetsMark size={17} />
-        Facets <span className="lib">{library.name}</span>
+        Facets
       </div>
       <MenuBar />
-      <div className="tabs">
-        {WORKSPACES.map(([w, l], i) => (
-          <button key={w} className={workspace === w ? 'on' : ''} title={`Ctrl+${i + 1}`} onClick={() => set({ workspace: w })}>{l}</button>
-        ))}
-      </div>
       <div className="spacer" />
       <div className="tb-actions">
         <button className="iconbtn" title={canUndo ? `Undo ${canUndo} (Ctrl+Z)` : 'Nothing to undo'} disabled={!canUndo} onClick={() => void cmd.undo()}><Icon name="undo" /></button>
         <button className="iconbtn" title={canRedo ? `Redo ${canRedo} (Ctrl+Y)` : 'Nothing to redo'} disabled={!canRedo} onClick={() => void cmd.redo()}><Icon name="redo" /></button>
-        <button className="btn small primary" style={{ marginLeft: 8 }} onClick={() => open('import')}><Icon name="import" size={14} />Import</button>
-        <button className="iconbtn" title="Settings" onClick={() => open('settings')}><Icon name="settings" /></button>
+        <button className="btn small" style={{ marginLeft: 6 }} onClick={() => open('import')}><Icon name="import" size={14} />Import</button>
       </div>
+      <nav className="modules">
+        {WORKSPACES.map(([w, l], i) => (
+          <button key={w} className={workspace === w ? 'on' : ''} title={`${l} (Ctrl+${i + 1})`} onClick={() => set({ workspace: w })}>{l}</button>
+        ))}
+      </nav>
     </div>
   )
 }
@@ -128,9 +182,10 @@ function useGlobalKeys(active: boolean) {
       if (ctrl && !e.shiftKey && k === 'z' && !typing) { e.preventDefault(); void cmd.undo(); return }
       if (ctrl && (k === 'y' || (e.shiftKey && k === 'z')) && !typing) { e.preventDefault(); void cmd.redo(); return }
       if (ctrl && k === 'i') { e.preventDefault(); s.openDialog('import'); return }
+      if (ctrl && e.key === ',') { e.preventDefault(); s.openDialog('settings'); return }
       if (ctrl && k === 'f') { e.preventDefault(); cmd.focusSearch(); return }
       if (e.key === 'F11') { e.preventDefault(); bridge.window('fullscreen'); return }
-      if (ctrl && e.shiftKey && k === 'n') { e.preventDefault(); s.toast('Series arrive in build stage 3', 'warn'); return }
+      if (ctrl && e.shiftKey && k === 'n') { e.preventDefault(); cmd.newSeries(); return }
       if (ctrl && k === 'p') { e.preventDefault(); s.toast('Palettes arrive in build stage 5', 'warn'); return }
       if (!typing && !ctrl && !e.altKey && e.key === '?') { s.openDialog('shortcuts') }
     }

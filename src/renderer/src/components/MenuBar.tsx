@@ -7,6 +7,7 @@ import { loadLibrary } from '../App'
 import { visibleTrees } from '../logic'
 import { confirm, openMenuAt, type MenuItem } from './ui'
 import * as cmd from '../commands'
+import { startTaxonomyImport } from './Dialogs2'
 
 const st = () => useStore.getState()
 
@@ -61,8 +62,9 @@ function fileMenu(): MenuItem[] {
         ...visibleTrees(s).map((t) => ({ label: t.name, onClick: () => void act('importOutline', t.id) }))
       ]
     },
-    later('Import Taxonomy (JSON)…', 2),
-    later('Read Filter Manifest…', 2),
+    { label: 'Import Tree File (JSON)…', icon: 'tree', onClick: () => void startTaxonomyImport() },
+    { label: 'Export All Trees (JSON)…', onClick: async () => { const p = await call<string | null>('exportTaxonomy', null); if (p) st().toast(`Saved ${p}`) } },
+    { label: 'Read Filter Manifest…', onClick: () => void act('readFilterManifest') },
     { sep: true },
     later('Export Site Snapshot', 7),
     later('Export Set Sidecar…', 7),
@@ -98,7 +100,9 @@ function editMenu(): MenuItem[] {
     { label: 'Select None', key: 'Ctrl+D', onClick: () => s.select([]) },
     { label: 'Invert Selection', onClick: cmd.invertSelection },
     { sep: true },
-    { label: 'Find', icon: 'search', key: 'Ctrl+F', onClick: cmd.focusSearch }
+    { label: 'Find', icon: 'search', key: 'Ctrl+F', onClick: cmd.focusSearch },
+    { sep: true },
+    { label: 'Settings…', icon: 'settings', key: 'Ctrl+,', onClick: () => s.openDialog('settings') }
   ]
 }
 
@@ -137,6 +141,7 @@ function organiseMenu(): MenuItem[] {
   const manual = s.sets.filter((x) => x.kind === 'manual' && !x.archived)
   return [
     { label: 'New Set from Selection…', icon: 'set', onClick: () => void cmd.newSet() },
+    { label: 'New Set from Current View…', onClick: () => void cmd.newSetFromView() },
     {
       label: 'Add to Set',
       sub: () =>
@@ -149,9 +154,19 @@ function organiseMenu(): MenuItem[] {
     { label: 'Assign Photo IDs', icon: 'hash', onClick: cmd.assignNames },
     { label: 'Withdraw Photo IDs', onClick: () => { const ids = cmd.need(); if (ids) void act('withdrawNames', ids) } },
     { sep: true },
-    later('New Series from Selection…', 3, 'Ctrl+Shift+N'),
-    later('Add to Series', 3),
-    later('Apply Series keywords to members…', 3),
+    { label: 'New Series from Selection…', icon: 'series', key: 'Ctrl+Shift+N', onClick: cmd.newSeries },
+    {
+      label: 'Add to Series',
+      sub: () =>
+        s.series.length
+          ? s.series.map((x) => ({ label: `${x.title} · ${x.publicId}`, onClick: () => { const ids = cmd.need(); if (ids) void act('addToSeries', x.id, ids) } }))
+          : [{ label: 'No Series yet', disabled: true }]
+    },
+    {
+      label: 'Apply Series keywords to members…',
+      disabled: s.seriesTarget === null && s.source.kind !== 'series',
+      onClick: () => s.openDialog('applySeries', { id: s.seriesTarget ?? (s.source as { id: number }).id })
+    },
     { sep: true },
     {
       label: 'Set Location state',
@@ -162,28 +177,20 @@ function organiseMenu(): MenuItem[] {
 
 function toolsMenu(): MenuItem[] {
   return [
-    later('Propose Shoots…', 2),
+    { label: 'Propose Shoots…', icon: 'camera', onClick: () => st().openDialog('proposeShoots', { ids: cmd.visibleIds }) },
     later('Suggest Locations…', 5),
     later('Privacy Audit', 7),
     later('Check Library', 9),
     later('Find Duplicates', 9),
-    later('Re-read Embedded Metadata…', 2),
-    later('Tidy-up Report', 2),
-    later('Promote Internal tags…', 7)
-  ]
-}
-
-function optionsMenu(): MenuItem[] {
-  const s = st()
-  return [
-    { label: 'Settings…', icon: 'settings', onClick: () => s.openDialog('settings') },
-    { label: 'Facets and trees…', icon: 'tree', onClick: () => s.set({ workspace: 'hierarchies' }) },
+    { label: 'Re-read Embedded Metadata…', onClick: () => { const ids = cmd.need(); if (ids) st().openDialog('reread', { ids }) } },
+    {
+      label: 'Tidy-up Report',
+      sub: () => visibleTrees(st()).map((t) => ({ label: t.name, onClick: () => st().openDialog('tidy', { treeId: t.id }) }))
+    },
+    later('Promote Internal tags…', 7),
+    { sep: true },
     later('Sites…', 7),
-    { label: 'Keyword root mapping…', onClick: () => s.openDialog('settings', { tab: 'import' }) },
-    { label: 'Name templates…', onClick: () => s.openDialog('settings', { tab: 'names' }) },
-    { label: 'Map tiles…', onClick: () => s.openDialog('settings', { tab: 'map' }) },
-    later('Ready checks…', 9),
-    { label: 'Keyboard shortcuts…', icon: 'keyboard', onClick: () => s.openDialog('shortcuts') }
+    later('Ready checks…', 9)
   ]
 }
 
@@ -206,7 +213,6 @@ const MENUS: { key: string; label: string; access: string; items: () => MenuItem
   { key: 'view', label: 'View', access: 'v', items: viewMenu },
   { key: 'organise', label: 'Organise', access: 'o', items: organiseMenu },
   { key: 'tools', label: 'Tools', access: 't', items: toolsMenu },
-  { key: 'options', label: 'Options', access: 'p', items: optionsMenu },
   { key: 'help', label: 'Help', access: 'h', items: helpMenu }
 ]
 

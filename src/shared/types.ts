@@ -147,6 +147,7 @@ export interface TNode {
   domain: Domain | '' // '' = the tree's default
   hidden: boolean
   retired: boolean
+  xrefs: number[] // cross-references to nodes in other trees (both directions)
 }
 
 export interface Shoot {
@@ -162,17 +163,72 @@ export interface Shoot {
   nextNumber: number
 }
 
-/** Editorial collection (records exist from stage 3; the type is here so the model is complete). */
+/** An editorial collection: independent of Shoots, one Primary Facet, its own permanent Series ID. */
 export interface Series {
   id: number
-  publicId: string
+  publicId: string // SER-000014
   title: string
   slug: string
+  slugFrozen: boolean
   summary: string
+  narrative: string
   primaryNodeId: number | null
+  themeRationale: string
   privacy: Privacy
   coverPhotoId: number | null
+  memberOrder: 'capture' | 'manual'
+  anchorLat: number | null
+  anchorLon: number | null
+  anchorMode: 'exact' | 'approximate' | 'hidden'
+  dateLabel: string
+  writeup: string
+  sources: string
   status: Status
+  verified: boolean
+  provenance: string
+  createdAt: string
+  members: number[] // Photo record IDs in editorial order
+  featured: number[] // ordered shortlist, up to 12
+  supporting: number[] // supporting node IDs (any Facet)
+  places: number[] // Location node IDs
+}
+
+/** Fields of a Series the editor can change. */
+export type SeriesPatch = Partial<
+  Pick<Series, 'title' | 'slug' | 'summary' | 'narrative' | 'primaryNodeId' | 'themeRationale' | 'privacy' | 'coverPhotoId' |
+    'memberOrder' | 'anchorLat' | 'anchorLon' | 'anchorMode' | 'dateLabel' | 'writeup' | 'sources' | 'status' | 'verified'>
+>
+
+/** A warning that a Series would largely repeat another (requirements 11.3). */
+export interface OverlapWarning {
+  seriesId: number
+  publicId: string
+  title: string
+  shared: number
+  pct: number
+  reason: 'same primary keyword' | 'similar title'
+}
+
+/** A proposed Shoot from time gaps and position jumps. Nothing is created until accepted. */
+export interface ShootProposal {
+  ids: number[]
+  start: string | null
+  end: string | null
+  withGps: number
+  noTime: number
+  suggestedName: string
+}
+
+/** Preview of importing a tree file, shown before anything changes. */
+export interface TaxonomyPreview {
+  trees: { key: string; name: string; exists: boolean; newNodes: number; matched: number; updated: number }[]
+  xrefs: number
+  problems: string[]
+}
+
+export interface TidyReport {
+  unused: { id: number; path: string }[]
+  similar: { ids: number[]; paths: string[] }[]
 }
 
 export interface PhotoSet {
@@ -181,6 +237,7 @@ export interface PhotoSet {
   kind: 'import' | 'manual'
   createdAt: string
   archived: boolean
+  state: Record<string, unknown> // remembered view state (filters, sort, view) for reopening exactly as left
 }
 
 export interface ImportRecord {

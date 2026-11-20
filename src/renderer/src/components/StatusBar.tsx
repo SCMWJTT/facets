@@ -10,6 +10,7 @@ export function StatusBar() {
   const p = useStore((s) => s.progress)
   const workspace = useStore((s) => s.workspace)
   const open = useStore((s) => s.openDialog)
+  const library = useStore((s) => s.library)
   return (
     <div className="statusbar">
       {workspace === 'library' ? <Shown /> : <span>{total.toLocaleString()} photos</span>}
@@ -25,6 +26,7 @@ export function StatusBar() {
           <button className="linkbtn" onClick={() => void call('pauseThumbs', !p.thumbPaused)}>{p.thumbPaused ? 'Resume' : 'Pause'}</button>
         </span>
       )}
+      <span title={library?.path} style={{ color: 'var(--text4)' }}>Library: {library?.name}</span>
       <button className="linkbtn" onClick={() => open('shortcuts')}>Shortcuts ?</button>
     </div>
   )
@@ -36,6 +38,7 @@ function Shown() {
   const source = useStore((s) => s.source)
   const sets = useStore((s) => s.sets)
   const shoots = useStore((s) => s.shoots)
+  const series = useStore((s) => s.series)
   let scope = 'All library'
   if (source.kind === 'set') scope = `Set: ${sets.find((x) => x.id === source.id)?.name ?? ''}`
   else if (source.kind === 'shoot') { const sh = shoots.find((x) => x.id === source.id); scope = `Shoot: ${sh ? `${sh.code} · ${sh.name}` : ''}` }
@@ -43,6 +46,8 @@ function Shown() {
   else if (source.kind === 'noShoot') scope = 'Not in a Shoot'
   else if (source.kind === 'locUnknown') scope = 'Location unknown'
   else if (source.kind === 'pending') scope = 'Pending review'
+  else if (source.kind === 'series') scope = `Series: ${series.find((x) => x.id === source.id)?.title ?? ''}`
+  else if (source.kind === 'selection') scope = 'Selection'
   return (
     <span>
       <b style={{ color: 'var(--text2)', fontWeight: 500 }}>{scope}</b> · {n === total ? `${total.toLocaleString()} photos` : `${n.toLocaleString()} of ${total.toLocaleString()} photos shown`}

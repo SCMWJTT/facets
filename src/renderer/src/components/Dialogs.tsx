@@ -10,6 +10,7 @@ import { useStore as useAppStore, FOOTER_OPTIONS, ICON_OPTIONS, THUMB_PRESETS } 
 import type { AppInfo } from '@shared/types'
 import { visibleTrees } from '../logic'
 import * as cmd from '../commands'
+import * as D2 from './Dialogs2'
 
 export function Dialogs() {
   const d = useStore((s) => s.dialog)
@@ -20,6 +21,13 @@ export function Dialogs() {
     case 'shoot': return <ShootDialog close={close} ids={(d.props?.ids as number[]) ?? []} />
     case 'settings': return <SettingsDialog close={close} initialTab={(d.props?.tab as string) ?? 'defaults'} />
     case 'about': return <AboutDialog close={close} licences={!!d.props?.licences} />
+    case 'newSeries': return <D2.NewSeriesDialog close={close} ids={d.props!.ids as number[]} />
+    case 'applySeries': return <D2.ApplySeriesDialog close={close} id={d.props!.id as number} />
+    case 'proposeShoots': return <D2.ProposeShootsDialog close={close} ids={d.props!.ids as number[]} />
+    case 'taxonomyImport': return <D2.TaxonomyImportDialog close={close} file={d.props!.file as string} preview={d.props!.preview as never} />
+    case 'tidy': return <D2.TidyDialog close={close} treeId={d.props!.treeId as number} />
+    case 'newFacet': return <D2.NewFacetDialog close={close} />
+    case 'reread': return <D2.RereadDialog close={close} ids={d.props!.ids as number[]} />
     case 'legend': return <IconLegendDialog close={close} />
     case 'thumbs': return <ThumbsDialog close={close} />
     case 'glossary': return <GlossaryDialog close={close} />

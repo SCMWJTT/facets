@@ -11,6 +11,7 @@ export type Source =
   | { kind: 'pending' }
   | { kind: 'node'; id: number }
   | { kind: 'saved'; name: string }
+  | { kind: 'selection'; ids: number[] }
 
 export type View = 'grid' | 'table' | 'single'
 export type Workspace = 'library' | 'map' | 'series' | 'hierarchies' | 'registry' | 'history'
@@ -70,6 +71,7 @@ export const THUMB_PRESETS: Record<string, { label: string; footer: string[]; ic
 export interface UiPrefs {
   thumbSize: number // 0..6
   footer: string[] // up to three, in order
+  stripH: number // height of the thumbnails area in single view
   icons: string[]
   facetColumns: string[]
   showFacets: boolean
@@ -90,6 +92,7 @@ export interface UiPrefs {
 const DEFAULT_PREFS: UiPrefs = {
   thumbSize: 3,
   footer: ['title', 'publicId'],
+  stripH: 190,
   icons: ICON_OPTIONS.map((o) => o[0]),
   facetColumns: ['h:subject', 'h:activity', 'h:location', 'shoot'],
   showFacets: false,
@@ -157,6 +160,8 @@ export interface LibState {
   filters: Filters
   selected: Set<number>
   focusId: number | null
+  /** When set, the inspector edits this Series rather than the selected photos. */
+  seriesTarget: number | null
   anchorId: number | null
   ui: UiPrefs
   toasts: Toast[]
@@ -220,6 +225,7 @@ export const useStore = create<LibState>((set, get) => ({
   filters: EMPTY_FILTERS,
   selected: new Set(),
   focusId: null,
+  seriesTarget: null,
   anchorId: null,
   ui: loadPrefs(),
   toasts: [],
@@ -249,6 +255,7 @@ export const useStore = create<LibState>((set, get) => ({
       canRedo: s.canRedo,
       selected: new Set(),
       focusId: null,
+  seriesTarget: null,
       anchorId: null,
       source: { kind: 'all' },
       filters: EMPTY_FILTERS,
@@ -306,7 +313,7 @@ export const useStore = create<LibState>((set, get) => ({
   select: (ids, focus) => {
     const s = new Set(ids)
     const f = focus === undefined ? (s.size ? [...s][s.size - 1] : null) : focus
-    set({ selected: s, focusId: f, anchorId: f })
+    set({ selected: s, focusId: f, anchorId: f, seriesTarget: null })
   },
 
   toast: (text, kind = 'ok') => {

@@ -115,3 +115,27 @@ export function photoMenu(): MenuItem[] {
   ]
   return items
 }
+
+// ---------------------------------------------------------------- Series
+
+/** New Series from the selected photos (Ctrl+Shift+N). */
+export function newSeries(): void {
+  const ids = need()
+  if (!ids) return
+  st().openDialog('newSeries', { ids })
+}
+
+/** Make a Series the inspector's editing target; optionally show its photos in the Library. */
+export function editSeries(id: number, showPhotos: boolean): void {
+  const s = st()
+  if (showPhotos) s.setSource({ kind: 'series', id })
+  s.set({ seriesTarget: id })
+  s.setUi({ inspTab: 'series', inspOpen: true })
+}
+
+/** New Set from everything shown in the current view (scope plus filters). */
+export async function newSetFromView(): Promise<void> {
+  if (!visibleIds.length) return st().toast('Nothing is shown in the current view', 'warn')
+  const name = await prompt('New Set from the current view', '', `It will hold the ${visibleIds.length} photos shown now.`, 'Create')
+  if (name) void act('createSet', name, visibleIds)
+}

@@ -86,7 +86,8 @@ function Picker({ req, close }: { req: PickerReq; close: () => void }) {
         const l = n.label.toLowerCase()
         const alts = n.aliases.map((a) => a.toLowerCase())
         let score = -1
-        if (l === last) score = 100
+        if (n.shortCode && n.shortCode.toLowerCase() === last) score = 110
+        else if (l === last) score = 100
         else if (l.startsWith(last)) score = 80
         else if (alts.some((a) => a.startsWith(last))) score = 70
         else if (l.includes(last)) score = 50
@@ -163,6 +164,7 @@ function Picker({ req, close }: { req: PickerReq; close: () => void }) {
                 )}
                 <span className="lab">{o.n.label}</span>
                 {o.depth === undefined && <span className="p">{pathLabel(o.n.id, ctx.nodeById).split(' › ').slice(0, -1).join(' › ')}</span>}
+                {o.n.shortCode && <span className="code" style={{ marginLeft: 6 }}>{o.n.shortCode}</span>}
                 {o.n.aliases.length > 0 && o.depth === undefined && <span className="alt">({o.n.aliases.join(', ')})</span>}
               </div>
             )

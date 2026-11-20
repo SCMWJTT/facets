@@ -32,7 +32,7 @@ export function LibraryView({ visible }: { visible: Visible }) {
       ) : view === 'table' ? (
         <Table visible={visible} />
       ) : (
-        <Single list={visible.list} />
+        <Single list={visible.list} visible={visible} />
       )}
     </>
   )
@@ -77,7 +77,30 @@ function sourceLabel(ctx: Ctx): string {
     case 'shoot': { const x = ctx.shoots.get(src.id); return x ? `${x.code} · ${x.name}` : 'Shoot' }
     case 'node': return pathLabel(src.id, ctx.nodeById)
     case 'saved': return src.name
+    case 'selection': return `Selection · ${src.ids.length} photos`
   }
+}
+
+/** The scope switch: Active Set / All Library / Current selection (requirements 9.3). */
+let lastSetId: number | null = null
+function scopeMenu(): MenuItem[] {
+  const s = useStore.getState()
+  if (s.source.kind === 'set') lastSetId = s.source.id
+  const set = lastSetId !== null ? s.sets.find((x) => x.id === lastSetId) : undefined
+  const sel = [...s.selected]
+  return [
+    { head: 'Scope' },
+    set
+      ? { label: `Active Set: ${set.name}`, icon: s.source.kind === 'set' ? 'check' : 'set', onClick: () => s.setSource({ kind: 'set', id: set.id }) }
+      : { label: 'Active Set (choose a Set in the navigator)', disabled: true },
+    { label: 'All Library', icon: s.source.kind === 'all' ? 'check' : 'image', onClick: () => s.setSource({ kind: 'all' }) },
+    {
+      label: `Current selection${sel.length ? ` (${sel.length})` : ''}`,
+      icon: s.source.kind === 'selection' ? 'check' : undefined,
+      disabled: !sel.length,
+      onClick: () => s.setSource({ kind: 'selection', ids: sel })
+    }
+  ]
 }
 
 function Toolbar({ visible }: { visible: Visible }) {
@@ -100,8 +123,10 @@ function Toolbar({ visible }: { visible: Visible }) {
   return (
     <div className="toolbar">
       <button className={'iconbtn' + (ui.navOpen ? '' : ' on')} title="Show or hide the navigator" onClick={() => setUi({ navOpen: !ui.navOpen })}><Icon name="panelL" /></button>
-      <div className="crumbs" title={sourceLabel(ctx)}>
+      <div className="crumbs scope" title="Change the scope: Active Set, All Library or Current selection" onClick={(e) => openMenuAt(e.currentTarget, scopeMenu())}>
+        <span className="scope-kind">{useStore.getState().source.kind === 'set' ? 'Set' : useStore.getState().source.kind === 'all' ? 'Library' : 'Scope'}</span>
         <b>{sourceLabel(ctx)}</b>
+        <Icon name="down" size={12} />
         <span className="n">{visible.list.length.toLocaleString()}{selected ? ` · ${selected.toLocaleString()} sel.` : ''}</span>
       </div>
       <div className="search">
@@ -386,7 +411,7 @@ const SIZES = [118, 142, 170, 205, 250, 310, 390]
 
 type GridItem = { kind: 'head'; g: Group; closed: boolean } | { kind: 'row'; photos: PhotoRow[] }
 
-function Grid({ visible }: { visible: Visible }) {
+function Grid({ visible, inStrip = false }: { visible: Visible; inStrip?: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(1000)
   const ui = useStore((s) => s.ui)
@@ -452,7 +477,7 @@ function Grid({ visible }: { visible: Visible }) {
     if (e.key in map) {
       e.preventDefault()
       moveFocus(e, order, map[e.key])
-    } else if (e.key === 'Enter') useStore.getState().set({ view: 'single' })
+    } else if (e.key === 'Enter' && !inStrip) useStore.getState().set({ view: 'single' })
   }
 
   // Ctrl+wheel changes the thumbnail size.
@@ -707,46 +732,53 @@ function Table({ visible }: { visible: Visible }) {
 
 // ---------------------------------------------------------------- single view
 
-function Single({ list }: { list: PhotoRow[] }) {
+function Single({ list, visible }: { list: PhotoRow[]; visible: Visible }) {
   const focusId = useStore((s) => s.focusId)
+  const stripH = useStore((s) => s.ui.stripH)
   const idx = Math.max(0, list.findIndex((p) => p.id === focusId))
   const p = list[idx]
-  const stripRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!list.length) return
     if (focusId === null || !list.some((x) => x.id === focusId)) useStore.getState().select([list[0].id], list[0].id)
   }, [focusId, list])
-  useEffect(() => {
-    const el = stripRef.current?.querySelector('img.on') as HTMLElement | null
-    el?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' })
-  }, [idx])
   const go = (d: number): void => {
     const n = list[Math.max(0, Math.min(list.length - 1, idx + d))]
     if (n) useStore.getState().select([n.id], n.id)
   }
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => ref.current?.focus(), [])
+  // Drag the bar between the large image and the thumbnails to give the thumbnails more or fewer rows.
+  const startResize = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    const y0 = e.clientY
+    const h0 = useStore.getState().ui.stripH
+    const total = ref.current?.clientHeight ?? 800
+    const move = (ev: MouseEvent): void => {
+      const h = Math.max(110, Math.min(total - 160, h0 - (ev.clientY - y0)))
+      useStore.getState().setUi({ stripH: Math.round(h) })
+    }
+    const up = (): void => {
+      window.removeEventListener('mousemove', move)
+      window.removeEventListener('mouseup', up)
+    }
+    window.addEventListener('mousemove', move)
+    window.addEventListener('mouseup', up)
+  }
   if (!p) return null
   const preview = thumbUrl(p.id, p.thumbVer, 'p')
-  const from = Math.max(0, idx - 30)
-  const strip = list.slice(from, idx + 31)
   return (
-    <div className="single" ref={ref} tabIndex={0} style={{ outline: 'none' }}
-      onKeyDown={(e) => { if (e.key === 'ArrowLeft') { e.preventDefault(); go(-1) } if (e.key === 'ArrowRight') { e.preventDefault(); go(1) } }}
-      onContextMenu={(e) => contextMenu(e, p.id)}>
-      <div className="stage">
+    <div className="single" ref={ref}>
+      <div className="stage" tabIndex={0} style={{ outline: 'none' }}
+        onKeyDown={(e) => { if (e.key === 'ArrowLeft') { e.preventDefault(); go(-1) } if (e.key === 'ArrowRight') { e.preventDefault(); go(1) } }}
+        onContextMenu={(e) => contextMenu(e, p.id)}>
         {preview ? <img key={p.id} src={preview} alt={p.alt} /> : <div className="muted">Preparing preview…</div>}
         <button className="navb l" onClick={() => go(-1)} disabled={idx === 0}><Icon name="left" size={20} /></button>
         <button className="navb r" onClick={() => go(1)} disabled={idx === list.length - 1}><Icon name="right" size={20} /></button>
       </div>
-      <div>
-        <div className="caption"><b>{p.title || 'Untitled'}</b>{p.caption}<span className="muted" style={{ marginLeft: 12 }}>{idx + 1} / {list.length}</span></div>
-        <div className="strip" ref={stripRef}>
-          {strip.map((x) => {
-            const u = thumbUrl(x.id, x.thumbVer)
-            return u ? <img key={x.id} src={u} className={x.id === p.id ? 'on' : ''} onClick={() => useStore.getState().select([x.id], x.id)} alt="" /> : null
-          })}
-        </div>
+      <div className="caption"><b>{p.title || 'Untitled'}</b>{p.caption}<span className="muted" style={{ marginLeft: 12 }}>{idx + 1} / {list.length}</span></div>
+      <div className="strip-handle" onMouseDown={startResize} title="Drag to resize the thumbnails area" />
+      <div className="strip-grid" style={{ height: stripH }}>
+        <Grid visible={visible} inStrip />
       </div>
     </div>
   )

@@ -4,8 +4,9 @@ import { act, call, thumbUrl } from '../api'
 import { useStore, EMPTY_FILTERS } from '../store'
 import { ancestors, descendants, kidsOf, pathLabel, useCtx, valueLabel, valuesOf, type Ctx } from '../logic'
 import { Icon, facetColor, treeIcon } from './Icon'
+import { startTaxonomyImport } from './Dialogs2'
+import { openPicker } from './NodePicker'
 import { confirm, openMenu, prompt } from './ui'
-import { openPicker, PickerHost } from './NodePicker'
 import { DRAG_TYPE, dragIds } from './Navigator'
 
 const NODE_DRAG = 'application/x-facets-node'
@@ -23,7 +24,13 @@ export function Explorer() {
     <div className="explorer">
       <section>
         <div className="ex-head"><h3>Hierarchies</h3>
-          <button className="iconbtn" title="New custom tree (the five Facets are fixed)" onClick={() => useStore.getState().openDialog('tree')}><Icon name="plus" /></button>
+          <button className="iconbtn" title="Tree files and new trees" onClick={(e) => openMenu(e, [
+            { label: 'Import tree file (JSON)…', icon: 'import', onClick: () => void startTaxonomyImport() },
+            { label: 'Export all trees (JSON)…', icon: 'save', onClick: async () => { const p = await call<string | null>('exportTaxonomy', null); if (p) useStore.getState().toast(`Saved ${p}`) } },
+            { sep: true },
+            { label: 'New custom tree…', icon: 'plus', onClick: () => useStore.getState().openDialog('tree') },
+            { label: 'Add a Facet (advanced)…', onClick: () => useStore.getState().openDialog('newFacet') }
+          ])}><Icon name="plus" /></button>
         </div>
         <div className="ex-scroll">
           {hs.map((x) => (
@@ -40,7 +47,6 @@ export function Explorer() {
       </section>
       {mode === 'cross' ? <CrossView ctx={ctx} /> : mode === 'report' ? <Report ctx={ctx} h={h} /> : h ? <TreePane h={h} ctx={ctx} /> : <section />}
       {mode === 'cross' ? null : <DetailPane ctx={ctx} h={h} />}
-      <PickerHost />
     </div>
   )
 }
@@ -139,6 +145,9 @@ function TreePane({ h, ctx }: { h: Tree; ctx: Ctx }) {
           { label: 'Expand all', onClick: () => setOpen(new Set([...ctx.nodeById.values()].filter((n) => n.treeId === h.id).map((n) => n.id))) },
           { label: 'Collapse all', onClick: () => setOpen(new Set()) },
           { label: showRetired ? 'Hide retired entries' : 'Show retired entries', onClick: () => setShowRetired(!showRetired) },
+          { sep: true },
+          { label: 'Export this tree (JSON)…', icon: 'save', onClick: async () => { const p = await call<string | null>('exportTaxonomy', h.id); if (p) useStore.getState().toast(`Saved ${p}`) } },
+          { label: 'Import tree file (JSON)…', icon: 'import', onClick: () => void startTaxonomyImport() },
           { sep: true },
           { label: 'Import outline (.txt)…', icon: 'import', onClick: () => void act('importOutline', h.id) },
           { label: 'Export outline (.txt)…', icon: 'save', onClick: async () => { const p = await call<string | null>('exportOutline', h.id); if (p) useStore.getState().toast(`Saved ${p}`) } }
@@ -279,6 +288,36 @@ function NodeDetails({ n, ctx, h }: { n: TNode; ctx: Ctx; h: Tree }) {
         )}
         <Field label="External references (one per line: name = value)" multiline value={Object.entries(n.refs).map(([k, v]) => `${k} = ${v}`).join('\n')}
           onCommit={(v) => void act('updateNode', n.id, { refs: Object.fromEntries(v.split('\n').map((l) => l.split('=').map((x) => x.trim())).filter((a) => a[0] && a[1] !== undefined).map((a) => [a[0], a.slice(1).join('=')])) })} />
+        <div>
+          <div className="label">Cross-references <span className="hint">related entries in other trees</span></div>
+          <div className="chips">
+            {n.xrefs.map((x) => {
+              const o = ctx.nodeById.get(x)
+              const ot = o ? ctx.trees.find((t) => t.id === o.treeId) : undefined
+              return (
+                <span key={x} className="chip" title={pathLabel(x, ctx.nodeById)}>
+                  {ot && <span style={{ color: facetColor(ot.key) ?? 'var(--text3)', display: 'grid' }}><Icon name={treeIcon(ot.key, ot.icon)} size={11} /></span>}
+                  <button className="linkbtn" style={{ padding: 0 }} onClick={() => o && useStore.getState().set({ explorerTree: o.treeId, explorerNode: o.id })}>{o?.label ?? '?'}</button>
+                  <button className="x" title="Remove" onClick={() => void act('removeXref', n.id, x)}><Icon name="x" size={10} stroke={2.2} /></button>
+                </span>
+              )
+            })}
+            <button className="btn small ghost" onClick={(e) => {
+              const el = e.currentTarget
+              openMenu(e, [
+                { head: 'Link to an entry in…' },
+                ...ctx.trees.filter((t) => t.id !== n.treeId && !t.archived).map((t) => ({
+                  label: t.name, icon: treeIcon(t.key, t.icon),
+                  onClick: () => openPicker(el, t, (oid) => void act('addXref', n.id, oid), async (labels) => {
+                    const r = await act('createPath', t.id, labels, [])
+                    const oid = r?.data as number | undefined
+                    if (oid) void act('addXref', n.id, oid)
+                  })
+                }))
+              ])
+            }}><Icon name="plus" size={13} /> Link</button>
+          </div>
+        </div>
         <div>
           <div className="label">Photos <span className="hint">{direct} directly · {below.length} at or below</span></div>
           <div className="minigrid">

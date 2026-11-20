@@ -389,3 +389,100 @@ function seedTrees(tx: Tx, lib: Library, photoId: number, x: ExifData, s: Settin
     }
   }
 }
+
+// ---------------------------------------------------------------- Filter manifest (filter-manifest/1, requirements 22.6)
+
+export interface ManifestResult {
+  batch: string
+  matched: number
+  unmatched: string[]
+}
+
+/** Record which Photos came from which Filter pick batch. One undoable action. */
+export function readFilterManifest(lib: Library, text: string): ManifestResult {
+  let m: { format?: string; batch?: unknown; date?: string; created?: string; destination?: string; files?: { rawKey?: string; file?: string }[] }
+  try {
+    m = JSON.parse(text)
+  } catch {
+    throw new Error('That file is not a readable Filter manifest (it is not valid JSON).')
+  }
+  if (m.format !== 'filter-manifest/1' || !Array.isArray(m.files)) throw new Error('That file is not a Filter manifest (expected format filter-manifest/1).')
+  const b = m.batch as { id?: unknown; name?: string; date?: string; created?: string } | string | number | undefined
+  const batchName = typeof b === 'object' && b ? String(b.name ?? b.id ?? '') : String(b ?? '')
+  const date = (typeof b === 'object' && b ? b.date ?? b.created : undefined) ?? m.date ?? m.created ?? ''
+  const label = `Filter batch ${batchName || '?'}${date ? ` · ${String(date).slice(0, 10)}` : ''}`
+  const find = lib.db.prepare('SELECT id FROM photos WHERE raw_key = ? AND retired = 0')
+  const unmatched: string[] = []
+  const ids: number[] = []
+  for (const f of m.files) {
+    const key = f.rawKey ?? (f.file ? path.basename(f.file).replace(/\.[^.]+$/, '') : '')
+    if (!key) continue
+    const rows = find.all(key) as { id: number }[]
+    if (!rows.length) unmatched.push(key)
+    for (const r of rows) ids.push(r.id)
+  }
+  lib.action(
+    'Read Filter manifest',
+    (tx) => {
+      for (const id of ids) tx.set('photos', id, 'filter_batch', label)
+    },
+    { source: 'import', params: { batch: label } }
+  )
+  return { batch: label, matched: ids.length, unmatched }
+}
+
+// ---------------------------------------------------------------- re-read embedded metadata (explicit, chosen fields)
+
+export type RereadField = 'title' | 'caption' | 'note' | 'alt' | 'rating' | 'creator' | 'copyright' | 'position' | 'captured' | 'keywords'
+
+export async function rereadMetadata(lib: Library, ids: number[], fields: RereadField[]): Promise<{ read: number; skipped: number; out: { touchedPhotos: Set<number>; touchedTables: Set<string> } }> {
+  const rows = lib.db
+    .prepare(`SELECT id, file_path, pos_source, location_state FROM photos WHERE id IN (${ids.join(',') || '0'})`)
+    .all() as { id: number; file_path: string; pos_source: string; location_state: string }[]
+  const settings = lib.getSettings()
+  const read: { row: (typeof rows)[number]; x: ExifData }[] = []
+  let skipped = 0
+  for (const r of rows) {
+    if (!fs.existsSync(r.file_path)) {
+      skipped++
+      continue
+    }
+    try {
+      read.push({ row: r, x: await readExif(r.file_path) })
+    } catch {
+      skipped++
+    }
+  }
+  const out = lib.action(
+    'Re-read embedded metadata',
+    (tx) => {
+      for (const { row, x } of read) {
+        const s = seedText(x, settings)
+        const want = new Set(fields)
+        if (want.has('title')) tx.set('photos', row.id, 'title', s.title)
+        if (want.has('caption')) tx.set('photos', row.id, 'caption', s.caption)
+        if (want.has('note')) tx.set('photos', row.id, 'note', s.note)
+        if (want.has('alt')) tx.set('photos', row.id, 'alt', s.alt)
+        if (want.has('rating')) tx.set('photos', row.id, 'rating', x.rating)
+        if (want.has('creator')) tx.set('photos', row.id, 'creator', s.creator)
+        if (want.has('copyright')) tx.set('photos', row.id, 'copyright', s.copyright)
+        if (want.has('captured') && x.captured) tx.set('photos', row.id, 'captured', x.captured)
+        if (want.has('position') && row.location_state !== 'not_retained') {
+          tx.set('photos', row.id, 'cam_lat', x.lat)
+          tx.set('photos', row.id, 'cam_lon', x.lon)
+          tx.set('photos', row.id, 'cam_ele', x.ele)
+          if (row.pos_source === 'camera' || row.pos_source === 'none') {
+            tx.set('photos', row.id, 'lat', x.lat)
+            tx.set('photos', row.id, 'lon', x.lon)
+            tx.set('photos', row.id, 'elevation', x.ele)
+            tx.set('photos', row.id, 'pos_source', x.lat !== null ? 'camera' : 'none')
+            if (x.lat !== null && (row.location_state === 'missing_gps' || row.location_state === 'unknown')) tx.set('photos', row.id, 'location_state', 'known')
+          }
+        }
+        if (want.has('keywords')) seedTrees(tx, lib, row.id, x, settings, row.location_state !== 'not_retained')
+      }
+    },
+    { bulkCount: read.length, source: 'bulk', params: { fields } }
+  )
+  return { read: read.length, skipped, out }
+}
