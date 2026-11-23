@@ -1,5 +1,6 @@
 // The menu bar in the title bar (requirements 24.2). Compact text buttons with Alt access keys.
 import { useEffect, useRef } from 'react'
+import { seriesLabel } from '@shared/shortname'
 import { LOCATION_STATES } from '@shared/types'
 import { act, bridge, call } from '../api'
 import { useStore, THUMB_PRESETS, type Workspace } from '../store'
@@ -140,6 +141,16 @@ function organiseMenu(): MenuItem[] {
   const s = st()
   const manual = s.sets.filter((x) => x.kind === 'manual' && !x.archived)
   return [
+    { label: 'New Working Group from Selection', icon: 'group', key: 'Ctrl+T', onClick: () => cmd.newGroup() },
+    {
+      label: 'Add to Working Group',
+      sub: () =>
+        s.groups.length
+          ? s.groups.map((g) => ({ label: `${g.code}${g.name ? ` · ${g.name}` : ''}`, onClick: () => cmd.addToGroup(g.code) }))
+          : [{ label: 'No working groups yet', disabled: true }]
+    },
+    { label: 'Clear All Working Groups', disabled: !s.groups.length, onClick: () => cmd.clearGroups() },
+    { sep: true },
     { label: 'New Set from Selection…', icon: 'set', onClick: () => void cmd.newSet() },
     { label: 'New Set from Current View…', onClick: () => void cmd.newSetFromView() },
     {
@@ -159,7 +170,7 @@ function organiseMenu(): MenuItem[] {
       label: 'Add to Series',
       sub: () =>
         s.series.length
-          ? s.series.map((x) => ({ label: `${x.title} · ${x.publicId}`, onClick: () => { const ids = cmd.need(); if (ids) void act('addToSeries', x.id, ids) } }))
+          ? s.series.map((x) => ({ label: `${seriesLabel(x)} · ${x.title}`, onClick: () => { const ids = cmd.need(); if (ids) void act('addToSeries', x.id, ids) } }))
           : [{ label: 'No Series yet', disabled: true }]
     },
     {

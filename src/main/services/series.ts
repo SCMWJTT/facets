@@ -4,6 +4,7 @@
 import type { Library, Tx } from '../db/library'
 import type { OverlapWarning, Series, SeriesPatch } from '@shared/types'
 import { slugify } from '@shared/naming'
+import { SHORT_MAX, suggestShortName } from '@shared/shortname'
 import { assignNode, nodeDomain } from './catalog'
 
 const nowIso = (): string => new Date().toISOString()
@@ -34,6 +35,7 @@ export function readSeriesFull(lib: Library, ids?: number[]): Series[] {
       id,
       publicId: r.public_id as string,
       title: r.title as string,
+      shortName: (r.short_name as string) || '',
       slug: r.slug as string,
       slugFrozen: b(r.slug_frozen),
       summary: r.summary as string,
@@ -93,6 +95,26 @@ function checkTitle(lib: Library, title: string, exceptId: number | null): strin
   return t
 }
 
+function takenShortNames(lib: Library, exceptId: number | null): string[] {
+  return (lib.db.prepare('SELECT short_name FROM series WHERE retired = 0 AND id IS NOT ?').all(exceptId) as { short_name: string }[]).map((r) => r.short_name).filter(Boolean)
+}
+
+function checkShortName(lib: Library, name: string, exceptId: number | null): string {
+  const t = name.trim()
+  if (!t) throw new Error('A Series needs a short name.')
+  if (t.length > SHORT_MAX) throw new Error(`Short names can be at most ${SHORT_MAX} characters.`)
+  const clash = lib.db
+    .prepare('SELECT public_id FROM series WHERE retired = 0 AND short_name = ? COLLATE NOCASE AND id IS NOT ?')
+    .get(t, exceptId) as { public_id: string } | undefined
+  if (clash) throw new Error(`Another Series (${clash.public_id}) already uses the short name "${t}".`)
+  return t
+}
+
+/** A free short name suggested from a title. */
+export function suggestSeriesShortName(lib: Library, title: string, exceptId: number | null = null): string {
+  return suggestShortName(title, takenShortNames(lib, exceptId))
+}
+
 function checkPrimary(lib: Library, nodeId: number | null, rationale: string): void {
   if (nodeId === null) return
   const f = facetKeyOfNode(lib, nodeId)
@@ -113,6 +135,7 @@ function captureOrder(lib: Library, ids: number[]): number[] {
 export interface NewSeries {
   title: string
   primaryNodeId: number | null
+  shortName?: string
   themeRationale?: string
   summary?: string
   photoIds: number[]
@@ -122,10 +145,12 @@ export interface NewSeries {
 export function createSeries(tx: Tx, lib: Library, s: NewSeries): number {
   const title = checkTitle(lib, s.title, null)
   checkPrimary(lib, s.primaryNodeId, s.themeRationale ?? '')
+  const shortName = s.shortName ? checkShortName(lib, s.shortName, null) : suggestSeriesShortName(lib, title)
   const publicId = issueSeriesId(lib, title)
   const id = tx.insert('series', {
     public_id: publicId,
     title,
+    short_name: shortName,
     slug: slugify(title),
     summary: s.summary ?? '',
     primary_node_id: s.primaryNodeId,
@@ -143,6 +168,7 @@ export function createSeries(tx: Tx, lib: Library, s: NewSeries): number {
 
 const SERIES_FIELDS: Record<string, string> = {
   title: 'title',
+  shortName: 'short_name',
   slug: 'slug',
   summary: 'summary',
   narrative: 'narrative',
@@ -174,6 +200,7 @@ export function updateSeries(tx: Tx, lib: Library, id: number, patch: SeriesPatc
       if (!cur.slug_frozen && p.slug === undefined) p.slug = slugify(p.title)
     }
   }
+  if (p.shortName !== undefined) p.shortName = checkShortName(lib, p.shortName, id)
   if (p.slug !== undefined) {
     p.slug = slugify(p.slug)
     if (cur.slug_frozen && p.slug !== cur.slug)

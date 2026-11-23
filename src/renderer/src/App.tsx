@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { bridge, call } from './api'
-import { useStore, EMPTY_FILTERS, type Filters, type Source, type UiPrefs, type View } from './store'
+import { useStore, EMPTY_FILTERS, loadGroups, type Filters, type Source, type UiPrefs, type View } from './store'
 import type { Delta, Snapshot } from '@shared/types'
 import { FacetsMark, Icon } from './components/Icon'
 import { MenuBar, WORKSPACES } from './components/MenuBar'
@@ -17,6 +17,7 @@ import { PickerHost } from './components/NodePicker'
 import { StatusBar } from './components/StatusBar'
 import * as cmd from './commands'
 import { useVisible } from './logic'
+import { MapView } from './components/MapView'
 
 export async function loadLibrary(): Promise<void> {
   const state = await call<{ library: { path: string; name: string } | null; recent: string[]; version: string }>('state')
@@ -24,6 +25,10 @@ export async function loadLibrary(): Promise<void> {
   if (state.library) {
     const s = useStore.getState()
     s.loadSnapshot(await call<Snapshot>('snapshot'))
+    {
+      const have = useStore.getState().byId
+      useStore.getState().set({ groups: loadGroups().map((g) => ({ ...g, ids: g.ids.filter((id) => have.has(id)) })) })
+    }
     // Reopen where the owner left off: the last active Set (or other source), exactly as it was.
     try {
       const last = JSON.parse(localStorage.getItem('facets.last.' + state.library.path) ?? 'null') as Source | null
@@ -34,7 +39,8 @@ export async function loadLibrary(): Promise<void> {
           (last.kind === 'set' && st.sets.some((x) => x.id === last.id)) ||
           (last.kind === 'shoot' && st.shoots.some((x) => x.id === last.id)) ||
           (last.kind === 'series' && st.series.some((x) => x.id === last.id)) ||
-          (last.kind === 'node' && st.nodes.some((x) => x.id === last.id)))
+          (last.kind === 'node' && st.nodes.some((x) => x.id === last.id)) ||
+          (last.kind === 'group' && st.groups.some((x) => x.code === last.code)))
       if (valid) {
         st.setSource(last)
         if (last.kind === 'set') restoreSetState(last.id)
@@ -106,10 +112,9 @@ export function App() {
   return (
     <div className="app">
       <TitleBar />
-      {workspace === 'library' && <LibraryWorkspace />}
+      {(workspace === 'library' || workspace === 'map') && <LibraryWorkspace map={workspace === 'map'} />}
       {workspace === 'hierarchies' && <div className="main"><div className="grow" style={{ minWidth: 0 }}><Explorer /></div></div>}
       {workspace === 'registry' && <div className="main"><div className="grow" style={{ minWidth: 0 }}><Registry /></div></div>}
-      {workspace === 'map' && <Coming icon="map" title="Map" stage={6} text="The full-screen geographic workspace: layers for photos, Shoots, Series and places, lasso selection kept in step with the grid, the missing-location lane and a timeline. Until then, the Locate tab in the inspector places photos." />}
       {workspace === 'series' && <SeriesWorkspace />}
       {workspace === 'history' && <Coming icon="history" title="History" stage={9} text="Every operation, with filters, a preview and revert with conflict checks. Every change is already being recorded, so this history will reach back to today. Undo and redo work now (Ctrl+Z, Ctrl+Y)." />}
       <StatusBar />
@@ -186,6 +191,7 @@ function useGlobalKeys(active: boolean) {
       if (ctrl && k === 'f') { e.preventDefault(); cmd.focusSearch(); return }
       if (e.key === 'F11') { e.preventDefault(); bridge.window('fullscreen'); return }
       if (ctrl && e.shiftKey && k === 'n') { e.preventDefault(); cmd.newSeries(); return }
+      if (ctrl && !e.shiftKey && k === 't' && !typing) { e.preventDefault(); cmd.newGroup(); return }
       if (ctrl && k === 'p') { e.preventDefault(); s.toast('Palettes arrive in build stage 5', 'warn'); return }
       if (!typing && !ctrl && !e.altKey && e.key === '?') { s.openDialog('shortcuts') }
     }
@@ -194,7 +200,7 @@ function useGlobalKeys(active: boolean) {
   }, [active])
 }
 
-function LibraryWorkspace() {
+function LibraryWorkspace({ map }: { map: boolean }) {
   const ui = useStore((s) => s.ui)
   const setUi = useStore((s) => s.setUi)
   const visible = useVisible()
@@ -212,7 +218,7 @@ function LibraryWorkspace() {
         </>
       )}
       <div className="center">
-        <LibraryView visible={visible} />
+        {map ? <MapView visible={visible} /> : <LibraryView visible={visible} />}
       </div>
       {ui.inspOpen && (
         <>
@@ -245,6 +251,10 @@ function useKeys(order: number[]) {
       if (ctrl && !e.shiftKey && k === 'n') { e.preventDefault(); cmd.newShoot(); return }
       if (ctrl || e.altKey) return
       if (/^[0-5]$/.test(e.key)) { cmd.setRating(Number(e.key)); return }
+      if (s.workspace === 'map') {
+        if (k === 'escape' && s.selected.size) s.select([])
+        return
+      }
       if (k === 'g') s.set({ view: 'grid' })
       else if (k === 'e' || k === ' ') { e.preventDefault(); s.set({ view: s.view === 'single' ? 'grid' : 'single' }) }
       else if (k === 't') s.set({ view: 'table' })

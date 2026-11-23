@@ -4,6 +4,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { MIGRATIONS, SCHEMA_VERSION } from './schema'
+import { suggestShortName } from '@shared/shortname'
 import type { Settings } from '@shared/types'
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -267,6 +268,11 @@ export class Library {
         this.db.prepare("INSERT INTO meta (key, value) VALUES ('library_id', ?)").run(crypto.randomUUID())
         this.db.prepare("INSERT INTO meta (key, value) VALUES ('next_series', '1')").run()
       }
+      // Give every existing Series a short name (new column in format 2).
+      const rows = this.db.prepare("SELECT id, title, short_name FROM series ORDER BY id").all() as { id: number; title: string; short_name: string }[]
+      const taken = rows.map((r) => r.short_name).filter(Boolean)
+      const up = this.db.prepare('UPDATE series SET short_name = ? WHERE id = ?')
+      for (const r of rows) if (!r.short_name) { const n = suggestShortName(r.title, taken); taken.push(n); up.run(n, r.id) }
     })
     run()
     this.log(`Library format upgraded from ${current} to ${SCHEMA_VERSION}`)

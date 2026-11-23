@@ -10,6 +10,7 @@ import { openPicker } from './NodePicker'
 import { MapPanel, distanceM } from './MapPanel'
 import { PhotoSeriesTab, SeriesEditor } from './SeriesEditor'
 import * as cmd from '../commands'
+import { seriesLabel } from '@shared/shortname'
 
 function shared<T>(photos: PhotoRow[], get: (p: PhotoRow) => T): { value: T | null; mixed: boolean } {
   if (!photos.length) return { value: null, mixed: false }
@@ -32,8 +33,8 @@ export function Inspector() {
     const x = series.find((s) => s.id === seriesTarget)
     return (
       <>
-        <div className="target-strip series">
-          <span>Editing Series {x?.publicId ?? ''}</span>
+        <div className="target-strip series plain">
+          <span><Icon name="series" size={12} /> {x ? `${seriesLabel(x)}` : 'Series'}</span>
           <button className="linkbtn" title="Back to editing the selected photos" onClick={() => useStore.getState().set({ seriesTarget: null })}>
             {photos.length ? `Edit ${photos.length} photo${photos.length === 1 ? '' : 's'} instead` : 'Close'}
           </button>

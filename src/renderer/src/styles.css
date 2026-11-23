@@ -659,3 +659,87 @@ table.mini { border-spacing: 0 3px; border-collapse: separate; }
 .series-editor .hname { flex-wrap: wrap; row-gap: 4px; }
 .series-editor .hname .meta { white-space: normal; }
 .seg button { white-space: nowrap; }
+
+/* ---------- 0.3.0: Series badge, Series line, icon bar ---------- */
+.tile .badges { right: 64px; }
+.tile .serbadge {
+  position: absolute; top: 8px; right: 8px; height: 20px; padding: 0 7px; border-radius: 10px; display: flex; align-items: center; gap: 4px;
+  background: rgba(122, 167, 224, 0.92); color: #0d1622; font-size: 10.5px; font-weight: 600; font-family: var(--mono); cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0,0,0,.5); max-width: 60px; overflow: hidden; white-space: nowrap;
+}
+.tile .serbadge:hover { background: #a4c4ee; }
+.tile .selmark { top: auto; bottom: 8px; }
+.tile .meta .t2.serline { color: var(--blue); font-family: var(--font); font-size: 11px; }
+.tile .meta .t2.serline.muted { color: var(--text4); }
+.missing-ring.inline { margin: 0; width: 10px; height: 10px; }
+.badge.ser { color: var(--blue); }
+.badge.ring { background: transparent; }
+
+.iconbar { display: flex; align-items: center; gap: 4px; padding: 0 12px 8px; flex-wrap: wrap; font-size: 11.5px; }
+.iconbar .lead { color: var(--text4); text-transform: uppercase; letter-spacing: .06em; font-size: 10px; margin-right: 4px; cursor: help; }
+.iconbar .ichip {
+  display: flex; align-items: center; gap: 5px; border: 0; background: var(--bg2); color: var(--text3); padding: 2px 8px 2px 3px;
+  border-radius: 12px; height: 24px; font-size: 11.5px;
+}
+.iconbar .ichip:hover { background: var(--bg3); color: var(--text2); }
+.iconbar .ichip.on { background: var(--accent-soft); color: var(--accent2); box-shadow: inset 0 0 0 1px var(--accent-ring); }
+.iconbar .ichip .badge { position: static; backdrop-filter: none; }
+.iconbar .ichip .n { color: var(--text4); font-size: 10.5px; }
+.iconbar .ichip.on .n { color: var(--accent2); }
+
+/* ---------- navigator: Series list and working groups ---------- */
+.nav-item .sernum { font-size: 10.5px; color: var(--blue); min-width: 46px; flex: none; }
+.gdot { width: 9px; height: 9px; border-radius: 50%; flex: none; display: inline-block; }
+.target-strip.plain { text-transform: none; letter-spacing: 0; font-size: 12.5px; font-weight: 500; display: flex; align-items: center; justify-content: space-between; }
+.target-strip.plain > span { display: flex; align-items: center; gap: 6px; }
+.ser-head { display: flex; align-items: baseline; gap: 8px; font-size: 15px; color: var(--text); }
+.ser-head .mono { color: var(--blue); font-size: 13px; }
+
+/* ---------- small Locate map: pin and resize ---------- */
+.map-wrap { display: flex; flex-direction: column; }
+.map-tools { position: absolute; top: 8px; left: 52px; z-index: 600; display: flex; gap: 4px; }
+.map-tools .iconbtn { background: rgba(17,18,22,.85); width: 28px; height: 28px; }
+.map-tools .iconbtn.on { color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-ring); }
+.map-resize { height: 8px; cursor: row-resize; position: relative; margin-bottom: 2px; }
+.map-resize::before { content: ''; position: absolute; left: 50%; top: 3px; width: 36px; height: 2px; margin-left: -18px; border-radius: 1px; background: var(--bg5); }
+.map-resize:hover::before { background: var(--accent); }
+
+/* ---------- Map module ---------- */
+.mapview { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.map-toolbar { flex-wrap: wrap; row-gap: 6px; }
+.map-toolbar .lead { color: var(--text4); text-transform: uppercase; letter-spacing: .06em; font-size: 10px; }
+.map-toolbar .select { max-width: 300px; }
+.gchips { display: flex; gap: 4px; flex-wrap: wrap; }
+.gchip { display: flex; align-items: center; gap: 5px; border: 0; background: var(--bg2); color: var(--text3); height: 26px; padding: 0 9px; border-radius: 13px; font-size: 12px; }
+.gchip:hover { background: var(--bg3); color: var(--text2); }
+.gchip.on { background: var(--bg4); color: var(--text); box-shadow: inset 0 0 0 1px var(--bg5); }
+.gchip:not(.on) .gdot { opacity: .45; }
+.mapview-map { flex: 1; position: relative; min-height: 0; margin: 0 12px; border-radius: 9px; overflow: hidden; background: #1a1c21; }
+.mapview-map .leaflet-container { background: #1a1c21; font: inherit; height: 100%; }
+.mapview-map .offline { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text3); text-align: center; z-index: 500; pointer-events: none; }
+.map-hint, .map-unplaced {
+  position: absolute; left: 50%; transform: translateX(-50%); z-index: 700; background: rgba(17,18,22,.92); color: var(--text2);
+  padding: 6px 12px; border-radius: 16px; font-size: 12px; box-shadow: var(--shadow); display: flex; gap: 10px; align-items: center; white-space: nowrap;
+}
+.map-hint { top: 10px; color: var(--accent2); }
+.map-unplaced { bottom: 12px; }
+.mthumb {
+  border-radius: 6px; overflow: hidden; background: #2a2d35; box-shadow: 0 0 0 2px rgba(255,255,255,.85), 0 3px 10px rgba(0,0,0,.6);
+  position: relative; transition: box-shadow .12s;
+}
+.mthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mthumb.sel { box-shadow: 0 0 0 3px var(--accent), 0 3px 12px rgba(0,0,0,.7); }
+.mthumb.cl::after { content: ''; position: absolute; inset: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.3); }
+.mthumb .mcount {
+  position: absolute; right: 2px; bottom: 2px; background: rgba(10,10,12,.82); color: #fff; font-size: 10.5px; font-weight: 600;
+  padding: 0 5px; border-radius: 8px; line-height: 16px;
+}
+.selstrip { flex: none; margin: 8px 12px 10px; background: var(--bg1); border-radius: 9px; padding: 6px 8px 8px; }
+.selstrip-head { display: flex; align-items: center; gap: 10px; font-size: 12px; padding: 0 2px 6px; }
+.selstrip-row { display: flex; gap: 5px; overflow-x: auto; height: 64px; cursor: grab; }
+.sthumb { flex: none; width: 64px; height: 64px; border-radius: 5px; overflow: hidden; background: var(--bg3); }
+.sthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sthumb.nopos { outline: 2px dashed var(--warn); outline-offset: -2px; }
+.sthumb .ph { width: 100%; height: 100%; }
+.toolbar .crumbs.scope b { flex: 0 1 auto; min-width: 60px; }
+.toolbar .search { min-width: 120px; }

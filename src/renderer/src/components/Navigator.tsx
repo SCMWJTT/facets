@@ -1,6 +1,7 @@
 import { useMemo, useState, type DragEvent, type ReactNode } from 'react'
 import { act } from '../api'
-import { useStore, EMPTY_FILTERS, type Source } from '../store'
+import { useStore, EMPTY_FILTERS, groupColor, type Source } from '../store'
+import { seriesNumber } from '@shared/shortname'
 import { ancestors, kidsOf, pathLabel, useCtx, missingRequired, locationDecided, visibleTrees, type Ctx } from '../logic'
 import type { Series, Tree } from '@shared/types'
 import { Icon, facetColor, treeIcon } from './Icon'
@@ -44,7 +45,7 @@ function useDrop(onIds: (ids: number[]) => void) {
 }
 
 function sameSource(a: Source, b: Source): boolean {
-  return a.kind === b.kind && (a as { id?: number }).id === (b as { id?: number }).id && (a as { name?: string }).name === (b as { name?: string }).name
+  return a.kind === b.kind && (a as { id?: number }).id === (b as { id?: number }).id && (a as { name?: string }).name === (b as { name?: string }).name && (a as { code?: string }).code === (b as { code?: string }).code
 }
 
 function Item({
@@ -132,6 +133,7 @@ export function Navigator() {
   const sets = useStore((s) => s.sets)
   const shoots = useStore((s) => s.shoots)
   const series = useStore((s) => s.series)
+  const groups = useStore((s) => s.groups)
   const library = useStore((s) => s.library)
   const savedAll = useStore((s) => s.ui.savedFilters)
   const saved = savedAll[library?.path ?? ''] ?? []
@@ -250,6 +252,31 @@ export function Navigator() {
         <Item src={{ kind: 'pending' }} icon={<Icon name="tag" size={15} dash />} label="Pending review" n={counts.pending} />
       </Section>
 
+      <Section id="groups" title="Working groups" onAdd={() => cmd.newGroup()} addTitle="New working group from selection (Ctrl+T)">
+        {groups.length === 0 && quiet('Select photos, then Ctrl+T for a quick group (T001, T002…)')}
+        {groups.map((g) => (
+          <Item key={g.code} src={{ kind: 'group', code: g.code }}
+            icon={<span className="gdot" style={{ background: groupColor(g.code) }} />}
+            label={<><span className="mono" style={{ fontSize: 11.5 }}>{g.code}</span>{g.name && <span className="muted"> · {g.name}</span>}</>}
+            n={g.ids.length}
+            onDropIds={(ids) => cmd.addToGroup(g.code, ids)}
+            onContext={(e) => openMenu(e, [
+              { head: `${g.code}${g.name ? ` · ${g.name}` : ''}` },
+              { label: 'Select its photos', icon: 'check', onClick: () => cmd.selectGroup(g.code) },
+              { label: 'Add selected photos', icon: 'plus', onClick: () => cmd.addToGroup(g.code) },
+              { label: 'Remove selected photos', onClick: () => cmd.removeFromGroup(g.code) },
+              { sep: true },
+              { label: 'Show on the map as the main group', icon: 'map', onClick: () => { const s = useStore.getState(); s.setUi({ map: { ...s.ui.map, primary: g.code, secondary: s.ui.map.secondary.filter((c) => c !== g.code) } }); s.set({ workspace: 'map' }) } },
+              { label: 'Name…', icon: 'pencil', onClick: () => void cmd.renameGroup(g.code) },
+              { label: 'Save as a Set…', icon: 'set', onClick: () => void cmd.groupToSet(g.code) },
+              { sep: true },
+              { label: 'Delete group', icon: 'trash', onClick: () => cmd.deleteGroup(g.code) },
+              { label: 'Delete all groups', onClick: async () => { if (await confirm('Delete all working groups?', 'Only the groups go; the photos are not affected.', 'Delete all', true)) cmd.clearGroups() } }
+            ])}
+          />
+        ))}
+      </Section>
+
       <Section id="sets" title="Sets" onAdd={() => void cmd.newSet()} addTitle="New Set from selection">
         <Item
           icon={<Icon name="import" size={15} />}
@@ -293,32 +320,7 @@ export function Navigator() {
 
       <Section id="series" title="Series" onAdd={() => cmd.newSeries()} addTitle="New Series from selection (Ctrl+Shift+N)">
         {series.length === 0 && quiet('Select photos, then New Series (Ctrl+Shift+N)')}
-        {facets.map((t) => {
-          const mine = series.filter((x) => x.primaryNodeId !== null && ctx.nodeById.get(x.primaryNodeId)?.treeId === t.id)
-          if (!mine.length) return null
-          const open = !isOpen(`sf:${t.id}`) // facets start open; the flag records closing
-          const byNode = new Map<number, typeof mine>()
-          for (const x of mine) byNode.set(x.primaryNodeId!, [...(byNode.get(x.primaryNodeId!) ?? []), x])
-          return (
-            <div key={t.id}>
-              <Item icon={<span style={{ color: facetColor(t.key), display: 'grid' }}><Icon name={treeIcon(t.key)} size={15} /></span>} label={t.name} n={mine.length}
-                twisty={{ open, toggle: () => toggle(`sf:${t.id}`) }} onClick={() => toggle(`sf:${t.id}`)} />
-              {open && [...byNode.entries()].sort((a, b) => pathLabel(a[0], ctx.nodeById).localeCompare(pathLabel(b[0], ctx.nodeById))).map(([nid, list]) => (
-                <div key={nid}>
-                  <div className="nav-path" style={{ paddingLeft: 36 }}>{pathLabel(nid, ctx.nodeById)}</div>
-                  {list.map((x) => <SeriesItem key={x.id} x={x} n={counts.ser.get(x.id) ?? 0} depth={2} />)}
-                </div>
-              ))}
-            </div>
-          )
-        })}
-        {series.some((x) => x.primaryNodeId === null) && (
-          <div>
-            <Item icon={<Icon name="series" size={15} />} label={<span className="muted">No Primary Facet yet</span>} n={series.filter((x) => x.primaryNodeId === null).length}
-              twisty={{ open: !isOpen('sf:none'), toggle: () => toggle('sf:none') }} onClick={() => toggle('sf:none')} />
-            {!isOpen('sf:none') && series.filter((x) => x.primaryNodeId === null).map((x) => <SeriesItem key={x.id} x={x} n={counts.ser.get(x.id) ?? 0} depth={1} />)}
-          </div>
-        )}
+        {[...series].sort((a, b) => a.publicId.localeCompare(b.publicId)).map((x) => <SeriesItem key={x.id} x={x} n={counts.ser.get(x.id) ?? 0} depth={0} />)}
       </Section>
 
       {location && (
@@ -441,7 +443,8 @@ function SeriesItem({ x, n, depth }: { x: Series; n: number; depth: number }) {
     <Item
       src={{ kind: 'series', id: x.id }}
       depth={depth}
-      label={<>{x.title} <span className="muted mono" style={{ fontSize: 10.5 }}>{x.publicId}</span></>}
+      icon={<span className="sernum mono">SER-{seriesNumber(x.publicId)}</span>}
+      label={<span title={x.title}>{x.shortName}</span>}
       extra={x.privacy === 'private' ? <span title="Private Series" style={{ color: 'var(--d-private)', display: 'grid' }}><Icon name="lock" size={11} /></span> : undefined}
       n={n}
       onClick={() => cmd.editSeries(x.id, true)}
@@ -531,7 +534,7 @@ function SetBreakdown({ setId, ctx }: { setId: number; ctx: Ctx }) {
   return (
     <div className="set-breakdown">
       {block('shoots', 'Shoots in this Set', () => [...data.shoot.entries()].map(([id, n]) => { const sh = ctx.shoots.get(id); return row(`sh${id}`, <><span className="code">{sh?.code}</span> {sh?.name}</>, n, 'shoot', String(id), 2) }), data.shoot.size)}
-      {block('series', 'Series in this Set', () => [...data.ser.entries()].map(([id, n]) => { const x = ctx.series.get(id); return row(`se${id}`, <>{x?.title} <span className="muted" style={{ fontSize: 10.5 }}>{x ? `${n} of ${x.members.length}` : ''}</span></>, n, 'series', String(id), 2) }), data.ser.size)}
+      {block('series', 'Series in this Set', () => [...data.ser.entries()].map(([id, n]) => { const x = ctx.series.get(id); return row(`se${id}`, <>{x ? `SER-${seriesNumber(x.publicId)}: ${x.shortName}` : ''} <span className="muted" style={{ fontSize: 10.5 }}>{x ? `${n} of ${x.members.length}` : ''}</span></>, n, 'series', String(id), 2) }), data.ser.size)}
       {visibleTrees(ctx).map((t) => {
         const m = data.tree.get(t.id)
         if (!m) return null

@@ -10,6 +10,7 @@ import { openPicker } from './NodePicker'
 import { Commit } from './Inspector'
 import { confirm, openMenuAt } from './ui'
 import * as cmd from '../commands'
+import { SHORT_MAX, seriesLabel, seriesNumber } from '@shared/shortname'
 
 export function SeriesEditor({ id, compact = false }: { id: number; compact?: boolean }) {
   const s = useStore((st) => st.series.find((x) => x.id === id))
@@ -53,13 +54,17 @@ function Header({ s }: { s: Series }) {
   return (
     <>
       <div className="row" style={{ gap: 8 }}>
-        <span className="mono" style={{ color: 'var(--blue)', fontSize: 12 }}>{s.publicId}</span>
+        <span className="ser-head"><span className="mono">SER-{seriesNumber(s.publicId)}</span>{s.shortName}</span>
         <span className="grow" />
         <select className="select" style={{ width: 120 }} value={s.status} onChange={(e) => void act('updateSeries', s.id, { status: e.target.value as Series['status'] })} title="Lifecycle status">
           {['draft', 'ready', 'published', 'withdrawn'].map((v) => <option key={v} value={v}>{v.charAt(0).toUpperCase() + v.slice(1)}</option>)}
         </select>
       </div>
-      <Commit label="Title (unique; the ID never changes)" value={s.title} onCommit={(v) => void act('updateSeries', s.id, { title: v })} />
+      <div className="row" style={{ alignItems: 'flex-end' }}>
+        <div style={{ width: 130 }}><Commit label={`Short name (max ${SHORT_MAX})`} value={s.shortName} onCommit={(v) => void act('updateSeries', s.id, { shortName: v })} /></div>
+        <div className="grow"><Commit label="Title (unique)" value={s.title} onCommit={(v) => void act('updateSeries', s.id, { title: v })} /></div>
+      </div>
+      <div className="muted mono" style={{ fontSize: 11, marginTop: -6 }}>Series ID {s.publicId} (never changes)</div>
       <div className="muted mono" style={{ fontSize: 11, marginTop: -6 }}>slug: {s.slug}{s.slugFrozen ? ' (frozen at publication)' : ' (follows the title until first published)'}</div>
       <div className="row" style={{ alignItems: 'flex-end' }}>
         <div>
@@ -324,7 +329,7 @@ export function PhotoSeriesTab({ photos }: { photos: PhotoRow[] }) {
     openMenuAt(el, [
       { label: 'New Series from these photos…', icon: 'plus', key: 'Ctrl+Shift+N', onClick: cmd.newSeries },
       ...(series.length ? [{ sep: true } as const, { head: 'Add to an existing Series' }] : []),
-      ...series.map((x) => ({ label: `${x.title} · ${x.publicId}`, onClick: () => void act('addToSeries', x.id, ids) }))
+      ...series.map((x) => ({ label: `${seriesLabel(x)} · ${x.title}`, onClick: () => void act('addToSeries', x.id, ids) }))
     ])
   return (
     <>
@@ -341,7 +346,7 @@ export function PhotoSeriesTab({ photos }: { photos: PhotoRow[] }) {
             <span style={{ color: t ? facetColor(t.key) : 'var(--text3)', display: 'grid' }}><Icon name={t ? treeIcon(t.key) : 'series'} size={15} /></span>
             <div className="grow" style={{ minWidth: 0 }}>
               <div className="t1">{x.title}</div>
-              <div className="muted" style={{ fontSize: 11 }}>{x.publicId}{pn ? ` · ${pn.label}` : ''}{n < photos.length ? ` · on ${n} of ${photos.length}` : ''}</div>
+              <div className="muted" style={{ fontSize: 11 }}>{seriesLabel(x)}{pn ? ` · ${pn.label}` : ''}{n < photos.length ? ` · on ${n} of ${photos.length}` : ''}</div>
             </div>
             <button className="btn small ghost" onClick={() => cmd.editSeries(sid, false)}>Edit</button>
             <button className="iconbtn" title="Remove the selected photos from this Series" onClick={() => void act('removeFromSeries', sid, ids)}><Icon name="x" size={13} /></button>

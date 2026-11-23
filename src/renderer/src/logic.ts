@@ -2,6 +2,7 @@
 import { useMemo } from 'react'
 import type { TNode, Tree, PhotoRow, Shoot, Series } from '@shared/types'
 import { LOCATION_STATES } from '@shared/types'
+import { seriesLabel } from '@shared/shortname'
 import { useStore, type Filters, type Source, type SortKey } from './store'
 
 export interface Ctx {
@@ -11,6 +12,7 @@ export interface Ctx {
   hByKey: Map<string, Tree>
   shoots: Map<number, Shoot>
   series: Map<number, Series>
+  groups: Map<string, Set<number>>
 }
 
 export function useCtx(): Ctx {
@@ -19,6 +21,7 @@ export function useCtx(): Ctx {
   const trees = useStore((s) => s.trees)
   const shoots = useStore((s) => s.shoots)
   const series = useStore((s) => s.series)
+  const groups = useStore((s) => s.groups)
   return useMemo(
     () => ({
       nodeById,
@@ -26,9 +29,10 @@ export function useCtx(): Ctx {
       trees,
       hByKey: new Map(trees.map((h) => [h.key, h])),
       shoots: new Map(shoots.map((s) => [s.id, s])),
-      series: new Map(series.map((s) => [s.id, s]))
+      series: new Map(series.map((s) => [s.id, s])),
+      groups: new Map(groups.map((g) => [g.code, new Set(g.ids)]))
     }),
-    [nodeById, children, trees, shoots, series]
+    [nodeById, children, trees, shoots, series, groups]
   )
 }
 
@@ -159,7 +163,7 @@ export function valueLabel(dim: string, v: string, ctx: Ctx): string {
       return s ? `${s.code} · ${s.name}` : v
     }
     case 'series':
-      return ctx.series.get(Number(v))?.title ?? v
+      { const x = ctx.series.get(Number(v)); return x ? `${seriesLabel(x)} · ${x.title}` : v === '0' ? 'No Series' : v }
     case 'locstate':
       return LOCATION_STATES.find((x) => x[0] === v)?.[1] ?? v
     case 'privacy':
@@ -256,7 +260,7 @@ export const FLAG_KEYS = [
 // ---------------------------------------------------------------- filtering
 
 const selSets = new WeakMap<number[], Set<number>>()
-function inSource(p: PhotoRow, s: Source, nodeSet: Set<number> | null): boolean {
+function inSource(p: PhotoRow, s: Source, nodeSet: Set<number> | null, ctx: Ctx): boolean {
   switch (s.kind) {
     case 'all':
     case 'saved':
@@ -275,6 +279,8 @@ function inSource(p: PhotoRow, s: Source, nodeSet: Set<number> | null): boolean 
       return p.internal.length > 0
     case 'node':
       return p.nodes.some((n) => nodeSet!.has(n))
+    case 'group':
+      return !!ctx.groups.get(s.code)?.has(p.id)
     case 'selection': {
       let set = selSets.get(s.ids)
       if (!set) selSets.set(s.ids, (set = new Set(s.ids)))
@@ -296,7 +302,7 @@ function textHit(p: PhotoRow, q: string, ctx: Ctx): boolean {
   if (sh && (sh.name.toLowerCase().includes(q) || sh.code.toLowerCase().includes(q) || sh.description.toLowerCase().includes(q))) return true
   for (const id of p.series) {
     const se = ctx.series.get(id)
-    if (se && (se.title.toLowerCase().includes(q) || se.publicId.toLowerCase().includes(q) || se.summary.toLowerCase().includes(q) || se.narrative.toLowerCase().includes(q))) return true
+    if (se && (se.title.toLowerCase().includes(q) || se.shortName.toLowerCase().includes(q) || se.publicId.toLowerCase().includes(q) || se.summary.toLowerCase().includes(q) || se.narrative.toLowerCase().includes(q))) return true
     if (se) for (const nid of se.supporting) { const n = ctx.nodeById.get(nid); if (n && (n.label.toLowerCase().includes(q) || n.aliases.some((a) => a.toLowerCase().includes(q)))) return true }
   }
   for (const id of p.nodes) {
@@ -328,6 +334,44 @@ function flagHit(p: PhotoRow, f: string, variantKeys: Set<string>): boolean {
   return true
 }
 
+/** The thumbnail icons (requirements 23.5), in the order they appear. Clicking one in the icon bar shows only photos that carry it. */
+export const TILE_ICONS: { key: string; label: string; help: string }[] = [
+  { key: 'pos', label: 'Placed', help: 'Has a map position' },
+  { key: 'nopos', label: 'Needs position', help: 'No position and no location state chosen' },
+  { key: 'locstate', label: 'Location withheld', help: 'Position intentionally unknown, hidden or not kept' },
+  { key: 'place', label: 'Location entry', help: 'Has an entry in the Location tree' },
+  { key: 'shoot', label: 'Shoot', help: 'Belongs to a Shoot (shows its code)' },
+  { key: 'series', label: 'Series', help: 'Belongs to one or more Series (top right of the thumbnail)' },
+  { key: 'priv', label: 'Private', help: 'Private: the photo, its Shoot or a Private Series' },
+  { key: 'int', label: 'Unreviewed tags', help: 'Has Internal or unreviewed tags (dashed tag)' },
+  { key: 'people', label: 'People', help: 'Shows identifiable people' },
+  { key: 'var', label: 'Variant', help: 'Another edit of the same RAW' },
+  { key: 'off', label: 'Offline', help: 'File offline (drive not connected)' },
+  { key: 'pub', label: 'Published', help: 'Published to at least one site' },
+  { key: 'chg', label: 'Changed', help: 'Changed since export' },
+  { key: 'missing', label: 'Missing fields', help: 'Missing required fields (orange ring)' }
+]
+
+export function iconHit(p: PhotoRow, key: string, ctx: Ctx): boolean {
+  switch (key) {
+    case 'pos': return p.lat !== null
+    case 'nopos': return p.lat === null && (p.locationState === 'missing_gps' || p.locationState === 'known')
+    case 'locstate': return p.lat === null && !(p.locationState === 'missing_gps' || p.locationState === 'known')
+    case 'place': { const loc = ctx.hByKey.get('location'); return !!loc && p.nodes.some((id) => ctx.nodeById.get(id)?.treeId === loc.id) }
+    case 'shoot': return !!p.shootId
+    case 'series': return p.series.length > 0
+    case 'priv': return isPrivate(p, ctx)
+    case 'int': return p.internal.length > 0
+    case 'people': return p.people
+    case 'var': return p.variantNo > 0
+    case 'off': return p.fileOffline
+    case 'pub': return p.sites.length > 0
+    case 'chg': return !!p.exportedAt && p.modifiedAt > p.exportedAt
+    case 'missing': return missingRequired(p, ctx).length > 0
+  }
+  return false
+}
+
 export function filterPhotos(photos: PhotoRow[], source: Source, f: Filters, ctx: Ctx, skipFacet?: string): PhotoRow[] {
   const nodeSet = source.kind === 'node' ? descendants(source.id, ctx) : null
   const q = f.text.trim().toLowerCase()
@@ -339,11 +383,11 @@ export function filterPhotos(photos: PhotoRow[], source: Source, f: Filters, ctx
     variantKeys = new Set([...count].filter(([, n]) => n > 1).map(([k]) => k))
   }
   return photos.filter((p) => {
-    if (!inSource(p, source, nodeSet)) return false
+    if (!inSource(p, source, nodeSet, ctx)) return false
     if (f.minRating && p.rating < f.minRating) return false
     for (const m of f.missing) if (!isMissing(p, m, ctx)) return false
     for (const fl of f.flags) {
-      if (fl === 'needs' ? !missingRequired(p, ctx).length : !flagHit(p, fl, variantKeys)) return false
+      if (fl === 'needs' ? !missingRequired(p, ctx).length : fl.startsWith('icon:') ? !iconHit(p, fl.slice(5), ctx) : !flagHit(p, fl, variantKeys)) return false
     }
     for (const [dim, vals] of facetEntries) {
       const have = valuesOf(p, dim, ctx)

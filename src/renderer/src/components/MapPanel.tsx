@@ -18,6 +18,11 @@ export function MapPanel({ photos, placing, onPlaced }: { photos: PhotoRow[]; pl
   const settings = useStore((s) => s.settings)!
   const mapLayer = useStore((s) => s.ui.mapLayer)
   const setUi = useStore((s) => s.setUi)
+  const pinned = useStore((s) => s.ui.locMapPinned)
+  const height = useStore((s) => s.ui.locMapH)
+  const pinnedRef = useRef(pinned)
+  pinnedRef.current = pinned
+  const boundsRef = useRef<L.LatLngExpression[]>([])
   const [online, setOnline] = useState(navigator.onLine)
   const placingRef = useRef(placing)
   placingRef.current = placing
@@ -91,20 +96,42 @@ export function MapPanel({ photos, placing, onPlaced }: { photos: PhotoRow[]; pl
         bounds.push([p.lat!, p.lon!])
       }
     }
-    if (bounds.length === 1) m.setView(bounds[0], Math.max(m.getZoom(), 15), { animate: true })
-    else if (bounds.length > 1) m.fitBounds(L.latLngBounds(bounds), { padding: [30, 30], maxZoom: 17, animate: true })
+    boundsRef.current = bounds
+    if (!pinnedRef.current) fit(m, bounds)
   }, [key]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const startResize = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    const y0 = e.clientY
+    const h0 = height
+    const move = (ev: MouseEvent): void => setUi({ locMapH: Math.max(140, Math.min(900, h0 + ev.clientY - y0)) })
+    const up = (): void => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
+    window.addEventListener('mousemove', move)
+    window.addEventListener('mouseup', up)
+  }
   return (
-    <div className="map">
+    <div className="map-wrap">
+    <div className="map" style={{ height }}>
       <div ref={el} style={{ height: '100%' }} />
+      <div className="map-tools">
+        <button className={'iconbtn small' + (pinned ? ' on' : '')} title={pinned ? 'Pinned: the map stays where you put it. Click to follow the selection again.' : 'Pin the map so it stops zooming to each selection'}
+          onClick={() => setUi({ locMapPinned: !pinned })}><Icon name="tack" size={14} /></button>
+        <button className="iconbtn small" title="Zoom to the selection" onClick={() => map.current && fit(map.current, boundsRef.current)}><Icon name="fit" size={14} /></button>
+      </div>
       <div className="map-layers seg">
         <button className={mapLayer === 'street' ? 'on' : ''} onClick={() => setUi({ mapLayer: 'street' })}>Map</button>
         <button className={mapLayer === 'satellite' ? 'on' : ''} onClick={() => setUi({ mapLayer: 'satellite' })}>Satellite</button>
       </div>
       {!online && <div className="offline"><div><Icon name="offline" size={22} /><div style={{ marginTop: 6 }}>No internet connection, so map tiles can't load.<br />Typed coordinates still work.</div></div></div>}
     </div>
+    <div className="map-resize" title="Drag to change the map height" onMouseDown={startResize} />
+    </div>
   )
+}
+
+function fit(m: L.Map, bounds: L.LatLngExpression[]): void {
+  if (bounds.length === 1) m.setView(bounds[0], Math.max(m.getZoom(), 15), { animate: true })
+  else if (bounds.length > 1) m.fitBounds(L.latLngBounds(bounds), { padding: [30, 30], maxZoom: 17, animate: true })
 }
 
 export const round = (n: number): number => Math.round(n * 1e6) / 1e6

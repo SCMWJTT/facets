@@ -1,6 +1,7 @@
 // The Series workspace (requirements 24.3): all Series by Primary Facet, as cards, with the full editor.
 import { useMemo, useState } from 'react'
 import type { Series } from '@shared/types'
+import { seriesLabel } from '@shared/shortname'
 import { thumbUrl } from '../api'
 import { useStore } from '../store'
 import { pathLabel, useCtx, visibleTrees } from '../logic'
@@ -21,7 +22,7 @@ export function SeriesWorkspace() {
     const t = q.trim().toLowerCase()
     if (!t) return series
     return series.filter((s) =>
-      [s.title, s.publicId, s.summary, s.narrative].some((x) => x.toLowerCase().includes(t)) ||
+      [s.title, s.shortName, s.publicId, s.summary, s.narrative].some((x) => x.toLowerCase().includes(t)) ||
       [s.primaryNodeId, ...s.supporting].some((id) => { const n = id !== null ? ctx.nodeById.get(id) : undefined; return !!n && (n.label.toLowerCase().includes(t) || n.aliases.some((a) => a.toLowerCase().includes(t))) })
     )
   }, [series, q, ctx])
@@ -64,7 +65,7 @@ export function SeriesWorkspace() {
                       </div>
                       <div className="sw-meta">
                         <div className="t1">{s.title}</div>
-                        <div className="t2">{s.publicId} · {s.members.length} photos · {s.status}</div>
+                        <div className="t2">{seriesLabel(s)} · {s.members.length} photos · {s.status}</div>
                         {s.primaryNodeId !== null && <div className="t2" title={pathLabel(s.primaryNodeId, ctx.nodeById)}>{ctx.nodeById.get(s.primaryNodeId)?.label}</div>}
                       </div>
                     </div>
@@ -78,7 +79,7 @@ export function SeriesWorkspace() {
       <div className="panel insp" style={{ width: 420, marginLeft: 6 }}>
         {current !== null ? (
           <>
-            <div className="target-strip series"><span>Editing Series {series.find((s) => s.id === current)?.publicId}</span>
+            <div className="target-strip series plain"><span>{(() => { const x = series.find((s) => s.id === current); return x ? seriesLabel(x) : '' })()}</span>
               <button className="linkbtn" onClick={() => cmd.editSeries(current, true)}>Show its photos</button></div>
             <div className="insp-body" key={current}><SeriesEditor id={current} /></div>
           </>

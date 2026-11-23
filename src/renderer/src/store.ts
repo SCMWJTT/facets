@@ -12,6 +12,24 @@ export type Source =
   | { kind: 'node'; id: number }
   | { kind: 'saved'; name: string }
   | { kind: 'selection'; ids: number[] }
+  | { kind: 'group'; code: string }
+
+/** A temporary working group (T001, T002…): a quick, throwaway selection kept until you delete it. */
+export interface TempGroup {
+  code: string
+  name: string
+  ids: number[]
+}
+
+/** Colours for working groups on the map, in order. */
+export const GROUP_COLORS = ['#7aa7e0', '#e07a9b', '#8fd18a', '#c79be8', '#e0c45e', '#6fd1cc', '#e0925e', '#a0a8b8']
+export const groupColor = (code: string): string => GROUP_COLORS[(Number(code.replace(/\D/g, '')) - 1 + GROUP_COLORS.length * 100) % GROUP_COLORS.length]
+
+export interface MapPrefs {
+  primary: string // 'view' (the photos in the current Library view) or a group code
+  secondary: string[] // group codes shown as coloured pins
+  showAll: boolean // every placed photo in the library as small dots
+}
 
 export type View = 'grid' | 'table' | 'single'
 export type Workspace = 'library' | 'map' | 'series' | 'hierarchies' | 'registry' | 'history'
@@ -38,6 +56,7 @@ export const FOOTER_OPTIONS: [string, string][] = [
   ['rawKey', 'Raw key'],
   ['date', 'Capture date'],
   ['shoot', 'Shoot'],
+  ['seriesLine', 'Series (SER numbers)'],
   ['series', 'Series title'],
   ['location', 'Location'],
   ['status', 'Status'],
@@ -49,7 +68,7 @@ export const ICON_OPTIONS: [string, string][] = [
   ['position', 'Position (pin)'],
   ['place', 'Has a Location entry'],
   ['shoot', 'Shoot code'],
-  ['series', 'In a Series'],
+  ['series', 'In a Series (top right)'],
   ['private', 'Private (lock)'],
   ['internal', 'Internal or unreviewed tags'],
   ['ai', 'AI proposals pending'],
@@ -64,7 +83,7 @@ export const ICON_OPTIONS: [string, string][] = [
 
 export const THUMB_PRESETS: Record<string, { label: string; footer: string[]; icons: string[] }> = {
   clean: { label: 'Clean', footer: ['title'], icons: ['rating'] },
-  cataloguing: { label: 'Cataloguing', footer: ['title', 'publicId'], icons: ICON_OPTIONS.map((o) => o[0]) },
+  cataloguing: { label: 'Cataloguing', footer: ['title', 'publicId', 'seriesLine'], icons: ICON_OPTIONS.map((o) => o[0]) },
   locating: { label: 'Locating', footer: ['title', 'location'], icons: ['position', 'place', 'private', 'rating'] }
 }
 
@@ -87,11 +106,16 @@ export interface UiPrefs {
   pasteSpec: PasteSpec | null
   savedFilters: Record<string, SavedFilter[]> // by library path
   navCollapsed: Record<string, boolean>
+  iconBar: boolean // the row of thumbnail icons above the grid
+  locMapH: number // height of the small Locate map
+  locMapPinned: boolean // when on, the small map stays where you put it
+  map: MapPrefs
+  prefsVer: number
 }
 
 const DEFAULT_PREFS: UiPrefs = {
   thumbSize: 3,
-  footer: ['title', 'publicId'],
+  footer: ['title', 'publicId', 'seriesLine'],
   stripH: 190,
   icons: ICON_OPTIONS.map((o) => o[0]),
   facetColumns: ['h:subject', 'h:activity', 'h:location', 'shoot'],
@@ -107,12 +131,24 @@ const DEFAULT_PREFS: UiPrefs = {
   mapLayer: 'street',
   pasteSpec: null,
   savedFilters: {},
-  navCollapsed: {}
+  navCollapsed: {},
+  iconBar: true,
+  locMapH: 260,
+  locMapPinned: false,
+  map: { primary: 'view', secondary: [], showAll: false },
+  prefsVer: 3
 }
 
 function loadPrefs(): UiPrefs {
   try {
-    return { ...DEFAULT_PREFS, ...JSON.parse(localStorage.getItem('facets.ui') ?? '{}') }
+    const stored = JSON.parse(localStorage.getItem('facets.ui') ?? '{}') as Partial<UiPrefs>
+    const ui: UiPrefs = { ...DEFAULT_PREFS, ...stored }
+    if ((stored.prefsVer ?? 0) < 3) {
+      // 0.3.0: thumbnails gain a third line showing their Series.
+      if (!ui.footer.includes('seriesLine') && ui.footer.length < 3) ui.footer = [...ui.footer, 'seriesLine']
+      ui.prefsVer = 3
+    }
+    return ui
   } catch {
     return DEFAULT_PREFS
   }
@@ -168,6 +204,7 @@ export interface LibState {
   progress: Progress
   clipboard: number | null
   dialog: { kind: string; props?: Record<string, unknown> } | null
+  groups: TempGroup[]
   explorerNode: number | null
   explorerTree: number | null
 
@@ -183,6 +220,16 @@ export interface LibState {
   toast: (text: string, kind?: Toast['kind']) => void
   openDialog: (kind: string, props?: Record<string, unknown>) => void
   closeDialog: () => void
+  setGroups: (g: TempGroup[]) => void
+}
+
+const groupKey = (): string => 'facets.groups.' + (useStore.getState().library?.path ?? '')
+export function loadGroups(): TempGroup[] {
+  try {
+    return JSON.parse(localStorage.getItem(groupKey()) ?? '[]')
+  } catch {
+    return []
+  }
 }
 
 function indexNodes(nodes: TNode[]) {
@@ -232,6 +279,7 @@ export const useStore = create<LibState>((set, get) => ({
   progress: { importDone: 0, importTotal: 0, importLabel: '', thumbDone: 0, thumbTotal: 0, thumbPaused: false },
   clipboard: null,
   dialog: null,
+  groups: [],
   explorerNode: null,
   explorerTree: null,
 
@@ -308,7 +356,7 @@ export const useStore = create<LibState>((set, get) => ({
 
   setFilters: (p) => set({ filters: { ...get().filters, ...p } }),
 
-  setSource: (source) => set({ source, workspace: 'library' }),
+  setSource: (source) => set({ source, workspace: get().workspace === 'map' ? 'map' : 'library' }),
 
   select: (ids, focus) => {
     const s = new Set(ids)
@@ -323,7 +371,11 @@ export const useStore = create<LibState>((set, get) => ({
   },
 
   openDialog: (kind, props) => set({ dialog: { kind, props } }),
-  closeDialog: () => set({ dialog: null })
+  closeDialog: () => set({ dialog: null }),
+  setGroups: (groups) => {
+    set({ groups })
+    try { localStorage.setItem(groupKey(), JSON.stringify(groups)) } catch { /* ignore */ }
+  }
 }))
 
 export const sel = (): number[] => [...useStore.getState().selected]

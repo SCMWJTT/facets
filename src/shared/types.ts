@@ -168,6 +168,7 @@ export interface Series {
   id: number
   publicId: string // SER-000014
   title: string
+  shortName: string // unique, up to 10 characters; shown as "SER-14: Short"
   slug: string
   slugFrozen: boolean
   summary: string
@@ -195,7 +196,7 @@ export interface Series {
 
 /** Fields of a Series the editor can change. */
 export type SeriesPatch = Partial<
-  Pick<Series, 'title' | 'slug' | 'summary' | 'narrative' | 'primaryNodeId' | 'themeRationale' | 'privacy' | 'coverPhotoId' |
+  Pick<Series, 'title' | 'shortName' | 'slug' | 'summary' | 'narrative' | 'primaryNodeId' | 'themeRationale' | 'privacy' | 'coverPhotoId' |
     'memberOrder' | 'anchorLat' | 'anchorLon' | 'anchorMode' | 'dateLabel' | 'writeup' | 'sources' | 'status' | 'verified'>
 >
 

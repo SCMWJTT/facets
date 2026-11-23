@@ -449,6 +449,10 @@ export const MIGRATIONS: string[] = [
     at TEXT NOT NULL,
     UNIQUE (photo_id, step)
   );
+  `,
+  // ---- 2 (0.3.0): Series short names. Adds a column only; existing data is untouched.
+  `
+  ALTER TABLE series ADD COLUMN short_name TEXT NOT NULL DEFAULT '';
   `
 ]
 

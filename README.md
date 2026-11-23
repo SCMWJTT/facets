@@ -28,6 +28,15 @@ The full brief is [docs/Facets_Requirements.md](docs/Facets_Requirements.md). Fa
 - **Series:** New Series from the selection (Ctrl+Shift+N) with a warning when it would largely repeat another Series. Each Series has a permanent ID (SER-000001), one Primary Facet and keyword, supporting keywords, summary, narrative, cover, up to 12 featured photos, a manual or capture-time order, places, an anchor, privacy and status. It appears once in the navigator under its Primary Facet. The Series workspace shows every Series as cards with the full editor. The inspector's Series tab lists a photo's Series, and becomes the Series editor when a Series is the target. "Apply Series keywords to members" is an explicit, previewed, undoable command. The Registry lists every Series ID with its earlier titles.
 - **Filter manifest** (File › Read Filter Manifest) and **Re-read embedded metadata** for chosen fields (Tools).
 
+## Version 0.3.0: working groups, the Map module and simpler Series
+
+- **Working groups** (T001, T002…): quick, throwaway selections. Select photos and press Ctrl+T. They sit in the navigator, can be shown, added to, named, saved as a Set or deleted. They are kept on this computer, not in the library.
+- **Map module**: the thumbnails are replaced by a map. The main group (the current Library view, or a working group) shows as thumbnails that grow as you zoom in; other working groups show as coloured pins; "All photos" adds every placed photo as grey dots. Click to select (Ctrl adds), Shift+drag a box to select, the crosshair tool places the selection. The navigator and inspector work as in the Library; drag the selection strip onto a Series, Set or group.
+- **Small Locate map**: a pin button stops it zooming to each selection, and the bar under it changes its height.
+- **Series**: each has a unique short name (up to 10 characters) and is shown as "SER-12: Short". The navigator lists them in number order. Thumbnails show a third line ("Series: SER-12: Short", "Series: 12, 24" or "Series: None") and a blue badge at the top right; clicking the badge selects that Series' photos in the view.
+- **Icon bar** above the grid: every thumbnail icon with its meaning and count. Click one to show only those photos.
+- Library format 2: adds the Series short-name column. Older libraries are backed up and upgraded when opened; nothing is removed.
+
 ## Building keyword trees on a test library
 
 Everything you build is kept when you install a newer version: libraries are only ever added to, never rebuilt. You can also move your trees between libraries: in Hierarchies, choose **+ › Export all trees (JSON)**, then in another library **+ › Import tree file (JSON)**. Entries keep their IDs, short codes, aliases and cross-references.

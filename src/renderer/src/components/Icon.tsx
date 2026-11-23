@@ -68,7 +68,11 @@ const P: Record<string, string> = {
   info: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5M12 8h.01',
   history: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2',
   map: 'M9 4l6 2 6-2v14l-6 2-6-2-6 2V6zM9 4v14M15 6v14',
-  registry: 'M4 4h16v16H4zM8 9h8M8 13h8M8 17h5'
+  registry: 'M4 4h16v16H4zM8 9h8M8 13h8M8 17h5',
+  tack: 'M9 3h6M10 3v6l-3 4h10l-3-4V3M12 13v8',
+  fit: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
+  lasso: 'M4 4h16v16H4z',
+  group: 'M4 6h10v10H4zM10 10h10v10H10z'
 }
 
 export function Icon({ name, size = 16, stroke = 1.6, fill = false, dash = false }: { name: string; size?: number; stroke?: number; fill?: boolean; dash?: boolean }) {

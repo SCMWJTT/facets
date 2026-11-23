@@ -2,9 +2,10 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { PhotoRow } from '@shared/types'
 import { act, call, thumbUrl } from '../api'
-import { useStore, EMPTY_FILTERS, THUMB_PRESETS } from '../store'
+import { useStore, EMPTY_FILTERS, THUMB_PRESETS, groupColor } from '../store'
+import { seriesLabel, seriesNumber } from '@shared/shortname'
 import {
-  FLAG_KEYS, MISSING_KEYS, dims, filterPhotos, fmtCaptured, groupOptions, isPrivate, kidsOf, missingRequired, pathLabel, sortOptions,
+  FLAG_KEYS, MISSING_KEYS, TILE_ICONS, iconHit, dims, filterPhotos, fmtCaptured, groupOptions, isPrivate, kidsOf, missingRequired, pathLabel, sortOptions,
   valueLabel, valuesOf, visibleTrees, type Ctx, type Group
 } from '../logic'
 import { LOCATION_STATES } from '@shared/types'
@@ -24,6 +25,7 @@ export function LibraryView({ visible }: { visible: Visible }) {
     <>
       <Toolbar visible={visible} />
       <FilterLine ctx={visible.ctx} />
+      <IconBar visible={visible} />
       {showFacets && <Facets ctx={visible.ctx} />}
       {visible.list.length === 0 ? (
         <EmptyState />
@@ -72,7 +74,8 @@ function sourceLabel(ctx: Ctx): string {
     case 'noShoot': return 'Not in a Shoot'
     case 'locUnknown': return 'Location unknown'
     case 'pending': return 'Pending review'
-    case 'series': { const x = ctx.series.get(src.id); return x ? `${x.title} · ${x.publicId}` : 'Series' }
+    case 'series': { const x = ctx.series.get(src.id); return x ? `${seriesLabel(x)} · ${x.title}` : 'Series' }
+    case 'group': { const g = s.groups.find((x) => x.code === src.code); return g ? `${g.code}${g.name ? ` · ${g.name}` : ''}` : 'Working group' }
     case 'set': return s.sets.find((x) => x.id === src.id)?.name ?? 'Set'
     case 'shoot': { const x = ctx.shoots.get(src.id); return x ? `${x.code} · ${x.name}` : 'Shoot' }
     case 'node': return pathLabel(src.id, ctx.nodeById)
@@ -208,6 +211,7 @@ function thumbMenu(): MenuItem[] {
     ...Object.entries(THUMB_PRESETS).map(([k, p]) => ({ label: p.label, onClick: () => cmd.applyThumbPreset(k) })),
     { sep: true },
     { label: 'Footer lines, icons and size…', icon: 'eye', onClick: () => s.openDialog('thumbs') },
+    { label: 'Show the icon bar', icon: s.ui.iconBar ? 'check' : undefined, onClick: () => s.setUi({ iconBar: !s.ui.iconBar }) },
     { label: 'Icon legend', icon: 'info', onClick: () => s.openDialog('legend') }
   ]
 }
@@ -223,7 +227,7 @@ function FilterLine({ ctx }: { ctx: Ctx }) {
     const l = MISSING_KEYS.find(([k]) => k === m)?.[1] ?? ctx.hByKey.get(m.slice(2))?.name ?? m
     chips.push({ label: `Missing ${l.toLowerCase()}`, clear: () => setFilters({ missing: f.missing.filter((x) => x !== m) }) })
   }
-  for (const fl of f.flags) chips.push({ label: FLAG_KEYS.find(([k]) => k === fl)?.[1] ?? fl, clear: () => setFilters({ flags: f.flags.filter((x) => x !== fl) }) })
+  for (const fl of f.flags) chips.push({ label: FLAG_KEYS.find(([k]) => k === fl)?.[1] ?? (fl.startsWith('icon:') ? `Icon: ${TILE_ICONS.find((x) => x.key === fl.slice(5))?.label}` : fl), clear: () => setFilters({ flags: f.flags.filter((x) => x !== fl) }) })
   if (f.minRating) chips.push({ label: `${'★'.repeat(f.minRating)} or more`, clear: () => setFilters({ minRating: 0 }) })
   for (const [dim, vals] of Object.entries(f.facets)) {
     for (const v of vals) chips.push({ label: valueLabel(dim, v, ctx), clear: () => setFilters({ facets: { ...f.facets, [dim]: vals.filter((x) => x !== v) } }) })
@@ -532,6 +536,7 @@ function footerLine(p: PhotoRow, key: string, ctx: Ctx): { text: string; cls: st
     case 'status': return { text: p.status, cls: 't2' }
     case 'shoot': { const sh = p.shootId ? ctx.shoots.get(p.shootId) : null; return { text: sh ? `${sh.code} · ${sh.name}` : 'No Shoot', cls: 't2' } }
     case 'series': { const se = p.series.map((id) => ctx.series.get(id)?.title).filter(Boolean); return { text: se.join(', ') || '—', cls: 't2' } }
+    case 'seriesLine': return { text: seriesLine(p, ctx), cls: 't2 serline' + (p.series.length ? '' : ' muted') }
     case 'camera': return { text: [p.focal ? `${p.focal} mm` : '', p.aperture ? `f/${p.aperture}` : '', p.shutter ? `${p.shutter} s` : '', p.iso ? `ISO ${p.iso}` : ''].filter(Boolean).join(' · ') || '—', cls: 't2' }
   }
   const tkey = key === 'location' ? 'location' : key.startsWith('h:') ? key.slice(2) : ''
@@ -540,40 +545,124 @@ function footerLine(p: PhotoRow, key: string, ctx: Ctx): { text: string; cls: st
   return { text: labels.join(', ') || '—', cls: 't2' }
 }
 
-/** Status icons across the top-left of the image (requirements 23.5), always in the same order. */
+/** "Series: SER-12: Veg" for one Series, "Series: 12, 24" for several, "Series: None". */
+export function seriesLine(p: PhotoRow, ctx: Ctx): string {
+  const list = p.series.map((id) => ctx.series.get(id)).filter((x): x is NonNullable<typeof x> => !!x).sort((a, b) => a.publicId.localeCompare(b.publicId))
+  if (!list.length) return 'Series: None'
+  if (list.length === 1) return `Series: ${seriesLabel(list[0])}`
+  return `Series: ${list.map((x) => seriesNumber(x.publicId)).join(', ')}`
+}
+
+/** The glyph for one thumbnail icon, as drawn on the tile and in the icon bar. */
+export function iconGlyph(key: string, p?: PhotoRow, ctx?: Ctx): { node: React.ReactNode; cls: string; title: string } {
+  const help = TILE_ICONS.find((x) => x.key === key)?.help ?? ''
+  switch (key) {
+    case 'pos': return { node: <Icon name="pinFill" size={11} fill stroke={0} />, cls: '', title: help }
+    case 'nopos': return { node: <Icon name="pinOff" size={11} />, cls: 'warn', title: help }
+    case 'locstate': return { node: <Icon name="pin" size={11} />, cls: '', title: p ? `Location intentionally ${LOCATION_STATES.find((x) => x[0] === p.locationState)?.[1].toLowerCase()}` : help }
+    case 'place': return { node: <Icon name="placeTick" size={11} />, cls: '', title: help }
+    case 'shoot': { const sh = p?.shootId && ctx ? ctx.shoots.get(p.shootId) : null; return { node: <span className="mono">{sh ? sh.code : 'S'}</span>, cls: 'code', title: sh ? `In Shoot ${sh.code} · ${sh.name}` : help } }
+    case 'series': return { node: <Icon name="series" size={11} />, cls: 'ser', title: help }
+    case 'priv': return { node: <Icon name="lock" size={11} />, cls: 'private', title: help }
+    case 'int': return { node: <Icon name="tag" size={11} dash />, cls: '', title: p ? `${p.internal.length} Internal or unreviewed tag${p.internal.length > 1 ? 's' : ''}` : help }
+    case 'people': return { node: <Icon name="people" size={11} />, cls: '', title: help }
+    case 'var': return { node: p ? `v${p.variantNo + 1}` : 'v2', cls: 'acc', title: help }
+    case 'off': return { node: <Icon name="offline" size={11} />, cls: 'bad', title: help }
+    case 'pub': return { node: <Icon name="globeTick" size={11} />, cls: 'ok', title: help }
+    case 'chg': return { node: <Icon name="pencil" size={11} />, cls: 'warn', title: help }
+    case 'missing': return { node: <span className="missing-ring inline" />, cls: 'ring', title: p && ctx ? `Missing: ${missingRequired(p, ctx).join(', ')}` : help }
+  }
+  return { node: null, cls: '', title: '' }
+}
+
+/** Which display option (Thumbnail display dialog) switches each icon on. */
+const ICON_OPTION: Record<string, string> = { pos: 'position', nopos: 'position', locstate: 'position', place: 'place', shoot: 'shoot', priv: 'private', int: 'internal', people: 'people', var: 'variant', off: 'offline', pub: 'published', chg: 'changed', missing: 'missing' }
+
+/** Status icons across the top-left of the image (requirements 23.5), always in the same order. Hover for the meaning. */
 function TileIcons({ p, ctx, icons }: { p: PhotoRow; ctx: Ctx; icons: string[] }) {
-  const on = (k: string): boolean => icons.includes(k)
   const out: React.ReactNode[] = []
-  const add = (key: string, title: string, node: React.ReactNode, cls = ''): void => {
-    out.push(<span key={key} className={'badge ' + cls} title={title}>{node}</span>)
+  let ring: React.ReactNode = null
+  for (const { key } of TILE_ICONS) {
+    if (key === 'series' || !icons.includes(ICON_OPTION[key]) || !iconHit(p, key, ctx)) continue
+    const g = iconGlyph(key, p, ctx)
+    if (key === 'missing') ring = <span key="m" className="missing-ring" title={g.title} />
+    else out.push(<span key={key} className={'badge ' + g.cls} title={g.title}>{g.node}</span>)
   }
-  if (on('position')) {
-    if (p.lat !== null) add('pos', 'Has a position', <Icon name="pinFill" size={11} fill stroke={0} />)
-    else if (p.locationState === 'missing_gps' || p.locationState === 'known') add('pos', 'No position and no location state set', <Icon name="pinOff" size={11} />, 'warn')
-    else add('pos', `Location intentionally ${LOCATION_STATES.find((x) => x[0] === p.locationState)?.[1].toLowerCase()}`, <Icon name="pin" size={11} />)
+  return <div className="badges">{out}{ring}</div>
+}
+
+/** The Series badge at the top right of a thumbnail. Click selects every photo of that Series in this view. */
+function SeriesBadge({ p, ctx }: { p: PhotoRow; ctx: Ctx }) {
+  const list = p.series.map((id) => ctx.series.get(id)).filter((x): x is NonNullable<typeof x> => !!x).sort((a, b) => a.publicId.localeCompare(b.publicId))
+  if (!list.length) return null
+  const pick = (sid: number): void => {
+    const s = useStore.getState()
+    const inView = new Set(cmd.visibleIds)
+    const members = ctx.series.get(sid)?.members ?? []
+    const ids = members.filter((id) => inView.has(id))
+    s.select(ids, p.id)
+    const x = ctx.series.get(sid)!
+    const out = members.length - ids.length
+    s.toast(`Selected ${ids.length} photo${ids.length === 1 ? '' : 's'} of ${seriesLabel(x)}${out ? ` (${out} more outside this view)` : ''}`)
   }
-  const loc = ctx.hByKey.get('location')
-  if (on('place') && loc && p.nodes.some((id) => ctx.nodeById.get(id)?.treeId === loc.id)) add('place', 'Has a Location entry', <Icon name="placeTick" size={11} />)
-  if (on('shoot') && p.shootId) { const sh = ctx.shoots.get(p.shootId); if (sh) add('shoot', `In Shoot ${sh.code} · ${sh.name}`, <span className="mono">{sh.code}</span>, 'code') }
-  if (on('series') && p.series.length) {
-    const first = ctx.series.get(p.series[0])
-    const pn = first?.primaryNodeId ? ctx.nodeById.get(first.primaryNodeId) : undefined
-    const tree = pn ? ctx.trees.find((t) => t.id === pn.treeId) : undefined
-    add('series', `In ${p.series.length} Series: ${p.series.map((id) => ctx.series.get(id)?.title).join(', ')}`,
-      <span style={{ color: tree ? facetColor(tree.key) : undefined, display: 'flex', alignItems: 'center', gap: 2 }}><Icon name={tree ? treeIcon(tree.key) : 'series'} size={11} />{p.series.length > 1 ? p.series.length : ''}</span>)
+  const menu = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    openMenu(e, list.flatMap((x, i) => [
+      ...(i ? [{ sep: true } as MenuItem] : []),
+      { head: `${seriesLabel(x)} · ${x.title}` },
+      { label: 'Select its photos in this view', icon: 'check', onClick: () => pick(x.id) },
+      { label: 'Show the Series', icon: 'image', onClick: () => cmd.editSeries(x.id, true) },
+      { label: 'Edit the Series', icon: 'pencil', onClick: () => cmd.editSeries(x.id, false) }
+    ]))
   }
-  if (on('private') && isPrivate(p, ctx)) add('priv', 'Private: the photo, its Shoot or a Private Series', <Icon name="lock" size={11} />, 'private')
-  if (on('internal') && p.internal.length) add('int', `${p.internal.length} Internal or unreviewed tag${p.internal.length > 1 ? 's' : ''}`, <Icon name="tag" size={11} dash />)
-  if (on('people') && p.people) add('people', 'Shows identifiable people', <Icon name="people" size={11} />)
-  if (on('variant') && p.variantNo > 0) add('var', 'Variant (another edit of the same RAW)', `v${p.variantNo + 1}`, 'acc')
-  if (on('offline') && p.fileOffline) add('off', 'File offline (drive not connected)', <Icon name="offline" size={11} />, 'bad')
-  if (on('published') && p.sites.length) add('pub', 'Published to at least one site', <Icon name="globeTick" size={11} />, 'ok')
-  if (on('changed') && !!p.exportedAt && p.modifiedAt > p.exportedAt) add('chg', 'Changed since export', <Icon name="pencil" size={11} />, 'warn')
-  const missing = on('missing') ? missingRequired(p, ctx) : []
   return (
-    <div className="badges">
-      {out}
-      {missing.length > 0 && <span className="missing-ring" title={`Missing: ${missing.join(', ')}`} />}
+    <span className="serbadge" title={`${list.map((x) => `${seriesLabel(x)} · ${x.title}`).join('\n')}\nClick to select ${list.length > 1 ? 'a Series' : 'all its photos'} · right-click for more`}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); if (list.length === 1) pick(list[0].id); else menu(e) }}
+      onContextMenu={menu}>
+      <Icon name="series" size={11} />
+      {list.length === 1 ? seriesNumber(list[0].publicId) : list.map((x) => seriesNumber(x.publicId)).join(',')}
+    </span>
+  )
+}
+
+/** A row of every thumbnail icon with its meaning and how many photos in view carry it. Click to show only those photos. */
+function IconBar({ visible }: { visible: Visible }) {
+  const on = useStore((s) => s.ui.iconBar)
+  const flags = useStore((s) => s.filters.flags)
+  const setFilters = useStore((s) => s.setFilters)
+  const photos = useStore((s) => s.photos)
+  const source = useStore((s) => s.source)
+  const filters = useStore((s) => s.filters)
+  const ctx = visible.ctx
+  // Counts ignore the icon filters themselves, so you can switch between them.
+  const counts = useMemo(() => {
+    if (!on) return new Map<string, number>()
+    const base = filterPhotos(photos, source, { ...filters, flags: filters.flags.filter((f) => !f.startsWith('icon:')) }, ctx)
+    const m = new Map<string, number>()
+    for (const p of base) for (const { key } of TILE_ICONS) if (iconHit(p, key, ctx)) m.set(key, (m.get(key) ?? 0) + 1)
+    return m
+  }, [on, photos, source, filters, ctx])
+  if (!on) return null
+  const active = flags.filter((f) => f.startsWith('icon:'))
+  return (
+    <div className="iconbar">
+      <span className="lead" title="Click an icon to show only the photos that carry it. Click again to clear.">Icons</span>
+      {TILE_ICONS.map(({ key, label, help }) => {
+        const n = counts.get(key) ?? 0
+        const f = `icon:${key}`
+        const isOn = flags.includes(f)
+        if (!n && !isOn) return null
+        const g = iconGlyph(key)
+        return (
+          <button key={key} className={'ichip' + (isOn ? ' on' : '')} title={`${help}. Click to show only these.`}
+            onClick={() => setFilters({ flags: isOn ? flags.filter((x) => x !== f) : [...flags, f] })}>
+            <span className={'badge ' + g.cls}>{g.node}</span>{label}<span className="n">{n.toLocaleString()}</span>
+          </button>
+        )
+      })}
+      {active.length > 0 && <button className="linkbtn" onClick={() => setFilters({ flags: flags.filter((x) => !x.startsWith('icon:')) })}>Clear</button>}
     </div>
   )
 }
@@ -606,6 +695,7 @@ const Tile = memo(function Tile({ p, w, h, order, ctx }: { p: PhotoRow; w: numbe
         <div className="img">
           {url ? <img src={url} className={loaded ? 'ok' : ''} onLoad={() => setLoaded(true)} draggable={false} alt="" /> : <div className="ph" />}
           <TileIcons p={p} ctx={ctx} icons={icons} />
+          {icons.includes('series') && <SeriesBadge p={p} ctx={ctx} />}
           {selected && <span className="selmark"><Icon name="check" size={11} stroke={2.4} /></span>}
         </div>
         {(lines.length > 0 || stars) && (

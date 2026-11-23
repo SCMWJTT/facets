@@ -9,6 +9,7 @@ import { Dialog } from './ui'
 import { Icon, facetColor, treeIcon } from './Icon'
 import { openPicker } from './NodePicker'
 import * as cmd from '../commands'
+import { SHORT_MAX, seriesNumber, suggestShortName } from '@shared/shortname'
 
 // ---------------------------------------------------------------- New Series
 
@@ -16,6 +17,8 @@ export function NewSeriesDialog({ close, ids }: { close: () => void; ids: number
   const ctx = useCtx()
   const facets = visibleTrees(ctx).filter((t) => t.kind === 'facet')
   const [title, setTitle] = useState('')
+  const [short, setShort] = useState('')
+  const [shortEdited, setShortEdited] = useState(false)
   const [facet, setFacet] = useState<Tree | null>(null)
   const [node, setNode] = useState<number | null>(null)
   const [rationale, setRationale] = useState('')
@@ -27,6 +30,12 @@ export function NewSeriesDialog({ close, ids }: { close: () => void; ids: number
     return () => clearTimeout(t)
   }, [ids, node, title])
   const titleClash = ctx.series ? [...ctx.series.values()].find((s) => s.title.toLowerCase() === title.trim().toLowerCase()) : undefined
+  useEffect(() => {
+    if (shortEdited) return
+    setShort(title.trim() ? suggestShortName(title, [...ctx.series.values()].map((x) => x.shortName)) : '')
+  }, [title, shortEdited, ctx.series])
+  const shortClash = [...ctx.series.values()].find((s) => s.shortName.toLowerCase() === short.trim().toLowerCase())
+  const nextNo = Math.max(0, ...[...ctx.series.values()].map((x) => seriesNumber(x.publicId))) + 1
   const pick = (el: HTMLElement, t: Tree): void => {
     setFacet(t)
     openPicker(el, t, (nid) => setNode(nid), async (labels) => {
@@ -37,10 +46,10 @@ export function NewSeriesDialog({ close, ids }: { close: () => void; ids: number
   }
   const nodeTree = node !== null ? ctx.trees.find((t) => t.id === ctx.nodeById.get(node)?.treeId) : undefined
   const isTheme = nodeTree?.key === 'theme'
-  const ok = !!title.trim() && !titleClash && (!isTheme || !!rationale.trim())
+  const ok = !!title.trim() && !titleClash && !!short.trim() && short.trim().length <= SHORT_MAX && !shortClash && (!isTheme || !!rationale.trim())
   const create = async (): Promise<void> => {
     setBusy(true)
-    const r = await act('createSeries', { title: title.trim(), primaryNodeId: node, themeRationale: rationale, summary, photoIds: ids })
+    const r = await act('createSeries', { title: title.trim(), shortName: short.trim(), primaryNodeId: node, themeRationale: rationale, summary, photoIds: ids })
     setBusy(false)
     if (r?.ok) {
       close()
@@ -54,6 +63,11 @@ export function NewSeriesDialog({ close, ids }: { close: () => void; ids: number
         <div className="label">Title <span className="hint">unique among active Series</span></div>
         <input className="field" autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Richard's Bake and Shark — Ash Wednesday 2026" onKeyDown={(e) => e.key === 'Enter' && ok && void create()} />
         {titleClash && <div className="err">Another Series ({titleClash.publicId}) already has this title. Add a year or a place to tell them apart.</div>}
+      </div>
+      <div>
+        <div className="label">Short name <span className="hint">up to {SHORT_MAX} characters, unique; shown as SER-{nextNo}: {short || '…'} (the number is a guide; it is issued when created)</span></div>
+        <input className="field" style={{ width: 180 }} maxLength={SHORT_MAX} value={short} onChange={(e) => { setShort(e.target.value); setShortEdited(true) }} />
+        {shortClash && <div className="err">SER-{seriesNumber(shortClash.publicId)} already uses this short name.</div>}
       </div>
       <div>
         <div className="label">Primary Facet and keyword <span className="hint">can be chosen later</span></div>

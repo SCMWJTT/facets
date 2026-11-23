@@ -525,6 +525,9 @@ export class Api {
   createSeries(s: S.NewSeries): ActionResult {
     return this.act('New Series', (tx, lib) => S.createSeries(tx, lib, s), () => `Series "${s.title}" created`, s.photoIds.length)
   }
+  suggestShortName(title: string, exceptId: number | null = null): string {
+    return S.suggestSeriesShortName(this.need(), title, exceptId)
+  }
   seriesOverlap(q: { photoIds: number[]; primaryNodeId: number | null; title: string; excludeId?: number | null }) {
     return S.overlapWarnings(this.need(), q)
   }

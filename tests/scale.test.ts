@@ -58,7 +58,8 @@ describe('100,000 photos', () => {
       trees: snap.trees,
       hByKey: new Map(snap.trees.map((h) => [h.key, h])),
       shoots: new Map(),
-      series: new Map()
+      series: new Map(),
+      groups: new Map()
     }
     for (const n of snap.nodes) {
       const k = `${n.treeId}:${n.parentId ?? 0}`
